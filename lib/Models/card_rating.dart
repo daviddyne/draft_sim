@@ -6,6 +6,10 @@ class CardRating {
   final double? gihwr;
   final double? iwd;
   final double? alsa;
+  // Filled from Scryfall since 17lands doesn't provide cost, type or rules text
+  final int cmc;
+  final String typeLine;
+  final String oracleText;
 
   CardRating({
     required this.name,
@@ -15,6 +19,9 @@ class CardRating {
     this.gihwr,
     this.iwd,
     this.alsa,
+    this.cmc = 0,
+    this.typeLine = '',
+    this.oracleText = '',
   });
 
   factory CardRating.fromJson(Map<String, dynamic> json) {
@@ -28,6 +35,32 @@ class CardRating {
       alsa: (json['avg_seen'] as num?)?.toDouble(),
     );
   }
+
+  CardRating withInfo(int cmc, String typeLine, String oracleText, String freshImageUrl) {
+    return CardRating(
+      name: name,
+      color: color,
+      rarity: rarity,
+      // Scryfall image links rotate, so a freshly fetched one beats the stored 17lands one
+      imageUrl: freshImageUrl.isNotEmpty ? freshImageUrl : imageUrl,
+      gihwr: gihwr,
+      iwd: iwd,
+      alsa: alsa,
+      cmc: cmc,
+      typeLine: typeLine,
+      oracleText: oracleText,
+    );
+  }
+
+  // Double faced cards get their front face type
+  String get _frontType => typeLine.split(' // ').first;
+
+  bool get isLand => _frontType.contains('Land');
+
+  bool get isCreature => _frontType.contains('Creature');
+
+  // Curve column, everything at 7 or more shares one pile
+  int get costBucket => cmc >= 7 ? 7 : cmc;
 
   // 0.55 -> "55.0%"
   String get gihwrLabel => gihwr == null ? '-' : '${(gihwr! * 100).toStringAsFixed(1)}%';
