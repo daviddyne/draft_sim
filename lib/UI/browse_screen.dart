@@ -2,6 +2,7 @@ import 'package:draft_sim/Logic/browse_cubit.dart';
 import 'package:draft_sim/Models/card_rating.dart';
 import 'package:draft_sim/Services/seventeen_lands_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'draft_screen.dart';
@@ -144,9 +145,24 @@ class _BrowseViewState extends State<_BrowseView> {
                           label: Text(c),
                           selected: _colors.contains(c),
                           selectedColor: _manaColor(c).withValues(alpha: 0.5),
-                          onSelected: (on) => setState(
-                            () => on ? _colors.add(c) : _colors.remove(c),
-                          ),
+                          onSelected: (on) => setState(() {
+                            // Plain click selects only this color, ctrl click adds or removes
+                            final ctrl =
+                                HardwareKeyboard.instance.isControlPressed;
+                            if (ctrl) {
+                              on ? _colors.add(c) : _colors.remove(c);
+                              if (on) _multicolor = true;
+                            } else {
+                              final wasOnlyThis =
+                                  _colors.length == 1 && _colors.contains(c);
+                              _colors.clear();
+                              if (!wasOnlyThis) {
+                                _colors.add(c);
+                                _multicolor = true;
+                              }
+                            }
+                            if (_colors.isEmpty) _multicolor = false;
+                          }),
                         ),
                       ),
                     Padding(
