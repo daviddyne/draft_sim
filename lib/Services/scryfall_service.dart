@@ -5,10 +5,18 @@ class ScryfallService {
   // Scryfall rejects requests without a proper user agent
   static const _headers = {'User-Agent': 'DraftSim/1.0', 'Accept': 'application/json'};
 
-  // Returns card name -> (mana value, type line, oracle text, image url) for a whole set
-  Future<Map<String, (int, String, String, String)>> fetchSetInfo(String setCode) async {
-    final map = <String, (int, String, String, String)>{};
-    var url = 'https://api.scryfall.com/cards/search?q=${Uri.encodeQueryComponent('set:$setCode')}&unique=cards';
+  // Returns card name -> (mana value, type line, oracle text, image url, arena id) for a whole set
+  // Arena printings carry the arena ids, plain printings fill in cards missing from Arena
+  Future<Map<String, (int, String, String, String, int?)>> fetchSetInfo(String setCode) async {
+    final map = <String, (int, String, String, String, int?)>{};
+    for (final q in ['set:spg game:arena', 'set:$setCode', 'set:$setCode game:arena']) {
+      await _addSet(map, q);
+    }
+    return map;
+  }
+
+  Future<void> _addSet(Map<String, (int, String, String, String, int?)> map, String query) async {
+    var url = 'https://api.scryfall.com/cards/search?q=${Uri.encodeQueryComponent(query)}&unique=cards';
     while (true) {
       final response = await http.get(Uri.parse(url), headers: _headers);
       if (response.statusCode != 200) break;
@@ -26,13 +34,14 @@ class ScryfallService {
         if (img.isEmpty && faces.isNotEmpty) {
           img = (faces.first['image_uris']?['normal'] ?? '') as String;
         }
+        final arenaId = (card['arena_id'] as num?)?.toInt();
         final fullName = card['name'] as String;
         // 17lands uses the front face name for double faced cards
         final front = fullName.split(' // ').first;
-        map[fullName] = (cmc, type, oracle, img);
-        map[front] = (cmc, type, oracle, img);
-        map[fullName.toLowerCase()] = (cmc, type, oracle, img);
-        map[front.toLowerCase()] = (cmc, type, oracle, img);
+        map[fullName] = (cmc, type, oracle, img, arenaId);
+        map[front] = (cmc, type, oracle, img, arenaId);
+        map[fullName.toLowerCase()] = (cmc, type, oracle, img, arenaId);
+        map[front.toLowerCase()] = (cmc, type, oracle, img, arenaId);
       }
       if (body['has_more'] == true && body['next_page'] != null) {
         url = body['next_page'];
@@ -40,7 +49,6 @@ class ScryfallService {
         break;
       }
     }
-    return map;
   }
 
   // Returns set code (uppercase) -> full set name

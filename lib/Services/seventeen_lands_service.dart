@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:draft_sim/Models/card_rating.dart';
 import 'package:http/http.dart' as http;
-
 import 'scryfall_service.dart';
 
 class SetOption {
@@ -38,7 +37,7 @@ class SeventeenLandsService {
     final info = await _scryfall.fetchSetInfo(setCode);
     final merged = [
       for (final c in cards)
-        if ((info[c.name] ?? info[c.name.toLowerCase()]) case final i?) c.withInfo(i.$1, i.$2, i.$3, i.$4) else c,
+        if ((info[c.name] ?? info[c.name.toLowerCase()]) case final i?) c.withInfo(i.$1, i.$2, i.$3, i.$4, i.$5) else c,
     ];
     // Cards without an image can't be shown in the pack grid
     return merged.where((c) => c.imageUrl.isNotEmpty).toList();

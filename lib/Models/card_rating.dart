@@ -10,6 +10,8 @@ class CardRating {
   final int cmc;
   final String typeLine;
   final String oracleText;
+  // Arena grp id, used to match cards from the Arena log
+  final int? arenaId;
 
   CardRating({
     required this.name,
@@ -22,6 +24,7 @@ class CardRating {
     this.cmc = 0,
     this.typeLine = '',
     this.oracleText = '',
+    this.arenaId,
   });
 
   factory CardRating.fromJson(Map<String, dynamic> json) {
@@ -36,7 +39,7 @@ class CardRating {
     );
   }
 
-  CardRating withInfo(int cmc, String typeLine, String oracleText, String freshImageUrl) {
+  CardRating withInfo(int cmc, String typeLine, String oracleText, String freshImageUrl, int? arenaId) {
     return CardRating(
       name: name,
       color: color,
@@ -49,6 +52,7 @@ class CardRating {
       cmc: cmc,
       typeLine: typeLine,
       oracleText: oracleText,
+      arenaId: arenaId,
     );
   }
 
