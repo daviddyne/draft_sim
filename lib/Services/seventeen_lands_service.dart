@@ -43,6 +43,22 @@ class SeventeenLandsService {
     return merged.where((c) => c.imageUrl.isNotEmpty).toList();
   }
 
+  // Basic lands as rating-less cards, so pack land slots can be shown
+  Future<List<CardRating>> fetchBasicLands(String setCode) async {
+    final lands = await _scryfall.fetchBasicLands(setCode);
+    return [
+      for (final (name, img, id) in lands)
+        CardRating(
+          name: name,
+          color: '',
+          rarity: 'basic',
+          imageUrl: img,
+          typeLine: 'Basic Land',
+          arenaId: id,
+        ),
+    ];
+  }
+
   // Set list for the start screen dropdown, full names come from Scryfall
   Future<List<SetOption>> fetchSets() async {
     final response = await http.get(Uri.parse('https://www.17lands.com/data/expansions'));

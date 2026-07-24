@@ -32,10 +32,11 @@ class _LiveViewState extends State<_LiveView> {
   double _cardSize = 240;
   double _zoomSize = 350;
   bool _zoomEnabled = true;
-  double _poolHeight = 320;
   double _rankWidth = 420;
   // Vertical split between the pack table and the picks table
   double _rankSplit = 0.6;
+  // Vertical split between the picks table and the sideboard table
+  double _sideSplit = 0.6;
   // Vertical split between main deck and sideboard in the finished layout
   double _doneSplit = 0.65;
   // Colors shown in the pool curves, empty shows everything
@@ -52,8 +53,30 @@ class _LiveViewState extends State<_LiveView> {
     return Scaffold(
       appBar: AppBar(
         title: BlocBuilder<ArenaDraftCubit, ArenaDraftState>(
-          builder: (context, state) => Text(
-            state.setCode.isEmpty ? 'Arena · detecting set...' : 'Arena · ${state.setCode} ${state.eventType}',
+          builder: (context, state) => Row(
+            children: [
+              Text(
+                state.setCode.isEmpty ? 'Arena · detecting set...' : 'Arena · ${state.setCode} ${state.eventType}',
+              ),
+              const SizedBox(width: 16),
+              if (state.connected) _buildColorFilter(),
+              if (state.unknownIds > 0)
+                Padding(
+                  padding: const EdgeInsets.only(left: 12),
+                  child: Text(
+                    '${state.unknownIds} unmatched (${state.unknownInfo})',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFFD9534F)),
+                  ),
+                ),
+              if (state.error != null)
+                Padding(
+                  padding: const EdgeInsets.only(left: 12),
+                  child: Text(
+                    state.error!,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFFD9534F)),
+                  ),
+                ),
+            ],
           ),
         ),
         actions: [
@@ -67,6 +90,11 @@ class _LiveViewState extends State<_LiveView> {
                 builder: (_) => BrowseScreen(setCode: s.setCode, eventType: s.eventType),
               ));
             },
+          ),
+          IconButton(
+            tooltip: 'Deck detection diagnostics',
+            icon: const Icon(Icons.bug_report_outlined),
+            onPressed: () => _showDiagnostics(context),
           ),
           IconButton(
             tooltip: 'Clear tracked draft',
@@ -140,69 +168,12 @@ class _LiveViewState extends State<_LiveView> {
               ),
             );
           }
-          // All picks made: give the whole screen to the picked cards
-          final done = state.pack.isEmpty && state.pool.length + state.sideboard.length >= 40;
-          if (done) {
-            return Column(
-              children: [
-                _buildStatus(context, state),
-                _buildColorFilter(),
-                const Divider(height: 1),
-                Expanded(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(child: _buildDonePool(state.pool, state.sideboard)),
-                      _buildVSplitter(),
-                      SizedBox(
-                        width: _rankWidth,
-                        child: _buildRankTable(context, 'Your picks', [...state.pool, ...state.sideboard]),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            );
-          }
-          return Column(
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildStatus(context, state),
-              _buildColorFilter(),
-              const Divider(height: 1),
-              Expanded(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(
-                      child: state.pack.isEmpty
-                          ? Center(
-                              child: Text(state.setCode.isEmpty
-                                  ? 'Waiting for a draft... join or continue one in Arena'
-                                  : 'Waiting for a pack... open or pick in Arena'),
-                            )
-                          : _buildPack(state.pack),
-                    ),
-                    _buildVSplitter(),
-                    SizedBox(
-                      width: _rankWidth,
-                      child: LayoutBuilder(
-                        builder: (context, constraints) => Column(
-                          children: [
-                            SizedBox(
-                              height: (constraints.maxHeight * _rankSplit - 5).clamp(0.0, constraints.maxHeight - 10),
-                              child: _buildRankTable(context, 'Pack', state.pack),
-                            ),
-                            _buildRankSplitter(constraints.maxHeight),
-                            Expanded(child: _buildRankTable(context, 'Your picks', state.pool)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              _buildHSplitter(),
-              SizedBox(height: _poolHeight, child: _buildPool(state.pool, state.sideboard)),
+              Expanded(child: _buildDonePool(state.pool, state.sideboard)),
+              _buildVSplitter(),
+              SizedBox(width: _rankWidth, child: _buildRankPanel(state)),
             ],
           );
         },
@@ -210,59 +181,86 @@ class _LiveViewState extends State<_LiveView> {
     );
   }
 
-  // Connection line: log path, live indicator and unmatched card warning
-  Widget _buildStatus(BuildContext context, ArenaDraftState state) {
-    final style = Theme.of(context).textTheme.bodySmall;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Row(
-        children: [
-          Icon(Icons.circle, size: 10, color: state.connected ? const Color(0xFF4CAF6D) : const Color(0xFFD9534F)),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              state.connected ? 'Tracking ${state.logPath}' : 'Not connected',
-              style: style,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          if (state.unknownIds > 0)
-            Text(
-              '${state.unknownIds} unmatched in pack (ids: ${state.unknownInfo})',
-              style: style?.copyWith(color: const Color(0xFFD9534F)),
-            ),
-          if (state.error != null)
-            Padding(
-              padding: const EdgeInsets.only(left: 8),
-              child: Text(state.error!, style: style?.copyWith(color: const Color(0xFFD9534F))),
-            ),
+  // Shows what the log parser found, so a wrong split can be diagnosed
+  void _showDiagnostics(BuildContext context) {
+    final cubit = context.read<ArenaDraftCubit>();
+    final s = cubit.state;
+    final summary = 'pool ${cubit.poolCount} · maindeck ${s.pool.length} · sideboard ${s.sideboard.length} · '
+        'deck detected ${cubit.deckApplied}\nlog: ${s.logPath}\n\nRecent lines mentioning a deck:\n';
+    final body = cubit.deckLines.isEmpty ? '${summary}none' : summary + cubit.deckLines.join('\n\n');
+    showDialog<void>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Deck detection'),
+        content: SizedBox(
+          width: 900,
+          child: SingleChildScrollView(child: SelectableText(body, style: const TextStyle(fontSize: 11))),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close')),
         ],
       ),
     );
   }
 
-  Widget _buildPack(List<CardRating> pack) {
-    return GridView.builder(
-      padding: const EdgeInsets.all(8),
-      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: _cardSize,
-        childAspectRatio: 0.62,
-        crossAxisSpacing: 8,
-        mainAxisSpacing: 8,
-      ),
-      itemCount: pack.length,
-      itemBuilder: (context, i) {
-        final card = pack[i];
-        return HoverZoom(
-          card: card,
-          zoomWidth: _zoomSize,
-          enabled: _zoomEnabled,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: cardImage(card, fit: BoxFit.contain),
-          ),
+  // Pack ranks on top, then picks, and a sideboard table once Arena reports one
+  // The pack table disappears when there is nothing left to pick
+  Widget _buildRankPanel(ArenaDraftState state) {
+    final hasSide = state.sideboard.isNotEmpty;
+    final hasPack = state.pack.isNotEmpty;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final h = constraints.maxHeight;
+        final packH = hasPack ? (h * _rankSplit - 5).clamp(0.0, h - 10) : 0.0;
+        final rest = hasPack ? h - packH - 10 : h;
+        return Column(
+          children: [
+            if (hasPack) ...[
+              SizedBox(height: packH, child: _buildRankTable(context, 'Pack', state.pack)),
+              _buildRankSplitter(h),
+            ],
+            if (!hasSide)
+              Expanded(
+                child: _buildRankTable(
+                  context,
+                  state.setCode.isEmpty ? 'Waiting for a draft in Arena' : 'Your picks',
+                  state.pool,
+                ),
+              )
+            else ...[
+              SizedBox(
+                height: (rest * _sideSplit - 5).clamp(0.0, rest - 10),
+                child: _buildRankTable(context, 'Your picks', state.pool),
+              ),
+              _buildSideSplitter(rest),
+              Expanded(child: _buildRankTable(context, 'Sideboard', state.sideboard)),
+            ],
+          ],
         );
       },
+    );
+  }
+
+  // Drag to change the split between the picks table and the sideboard table
+  Widget _buildSideSplitter(double totalHeight) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeRow,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onVerticalDragUpdate: (d) => setState(() {
+          _sideSplit = (_sideSplit + d.delta.dy / totalHeight).clamp(0.2, 0.85);
+        }),
+        child: SizedBox(
+          height: 10,
+          child: Center(
+            child: Container(
+              width: 60,
+              height: 4,
+              decoration: BoxDecoration(color: Theme.of(context).dividerColor, borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -338,25 +336,34 @@ class _LiveViewState extends State<_LiveView> {
   // Color chips filtering both the main deck and sideboard curves
   // Colorless cards and lands always show since any deck can play them
   Widget _buildColorFilter() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-      child: Row(
-        children: [
-          Text('Colors', style: Theme.of(context).textTheme.labelMedium),
-          const SizedBox(width: 8),
-          for (final c in ['W', 'U', 'B', 'R', 'G'])
-            Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: FilterChip(
-                label: Text(c),
-                visualDensity: VisualDensity.compact,
-                selected: _colorFilter.contains(c),
-                selectedColor: _manaColor(c).withValues(alpha: 0.5),
-                onSelected: (on) => setState(() => on ? _colorFilter.add(c) : _colorFilter.remove(c)),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final c in ['W', 'U', 'B', 'R', 'G'])
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: InkWell(
+              onTap: () => setState(() => _colorFilter.contains(c) ? _colorFilter.remove(c) : _colorFilter.add(c)),
+              child: Container(
+                width: 26,
+                height: 26,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _colorFilter.contains(c) ? _manaColor(c) : _manaColor(c).withValues(alpha: 0.25),
+                ),
+                child: Text(
+                  c,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: _colorFilter.contains(c) ? Colors.black : null,
+                    fontWeight: _colorFilter.contains(c) ? FontWeight.bold : FontWeight.normal,
+                  ),
+                ),
               ),
             ),
-        ],
-      ),
+          ),
+      ],
     );
   }
 
@@ -368,19 +375,19 @@ class _LiveViewState extends State<_LiveView> {
     ];
   }
 
-  // Finished layout: main deck on top, sideboard below, split draggable
+  // Main deck left, sideboard right, split draggable
   Widget _buildDonePool(List<CardRating> pool, List<CardRating> sideboard) {
-    final cubit = context.read<ArenaDraftCubit>();
     return LayoutBuilder(
-      builder: (context, constraints) => Column(
+      builder: (context, constraints) => Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(
-            height: (constraints.maxHeight * _doneSplit - 5).clamp(0.0, constraints.maxHeight - 10),
-            child: _curve(_colorFiltered(pool), onSecondary: cubit.toSideboard, showTargets: true, emptyText: 'No picks tracked yet'),
+            width: (constraints.maxWidth * _doneSplit - 5).clamp(0.0, constraints.maxWidth - 10),
+            child: _curve(_colorFiltered(pool), showTargets: true, emptyText: 'No picks tracked yet'),
           ),
-          _buildDoneSplitter(constraints.maxHeight),
+          _buildDoneSplitter(constraints.maxWidth),
           Expanded(
-            child: _curve(_colorFiltered(sideboard), onSecondary: cubit.toPool, showTargets: false, emptyText: 'Sideboard empty'),
+            child: _curve(_colorFiltered(sideboard), showTargets: false, emptyText: 'Sideboard follows your Arena deck'),
           ),
         ],
       ),
@@ -388,20 +395,20 @@ class _LiveViewState extends State<_LiveView> {
   }
 
   // Drag to change the split between main deck and sideboard
-  Widget _buildDoneSplitter(double totalHeight) {
+  Widget _buildDoneSplitter(double totalWidth) {
     return MouseRegion(
-      cursor: SystemMouseCursors.resizeRow,
+      cursor: SystemMouseCursors.resizeColumn,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onVerticalDragUpdate: (d) => setState(() {
-          _doneSplit = (_doneSplit + d.delta.dy / totalHeight).clamp(0.15, 0.85);
+        onHorizontalDragUpdate: (d) => setState(() {
+          _doneSplit = (_doneSplit + d.delta.dx / totalWidth).clamp(0.2, 0.85);
         }),
         child: SizedBox(
-          height: 10,
+          width: 10,
           child: Center(
             child: Container(
-              width: 60,
-              height: 4,
+              width: 4,
+              height: 60,
               decoration: BoxDecoration(color: Theme.of(context).dividerColor, borderRadius: BorderRadius.circular(2)),
             ),
           ),
@@ -410,22 +417,9 @@ class _LiveViewState extends State<_LiveView> {
     );
   }
 
-  // Main deck curve on the left half, planning sideboard on the right half
-  Widget _buildPool(List<CardRating> pool, List<CardRating> sideboard) {
-    final cubit = context.read<ArenaDraftCubit>();
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(child: _curve(_colorFiltered(pool), onSecondary: cubit.toSideboard, showTargets: true, emptyText: 'No picks tracked yet')),
-        Container(width: 2, color: Theme.of(context).dividerColor),
-        Expanded(child: _curve(_colorFiltered(sideboard), onSecondary: cubit.toPool, showTargets: false, emptyText: 'Sideboard empty')),
-      ],
-    );
-  }
-
   // Curve view: lands far left, columns by cost with spells on top and creatures below
-  // Right click a card to move it to the other side
-  Widget _curve(List<CardRating> cards, {required void Function(CardRating) onSecondary, required bool showTargets, required String emptyText}) {
+  // Read only, the split mirrors the deck built in Arena
+  Widget _curve(List<CardRating> cards, {required bool showTargets, required String emptyText}) {
     final w = _cardSize * 0.47;
     final offset = w * 0.15;
     final cardH = w * 1.4;
@@ -441,44 +435,48 @@ class _LiveViewState extends State<_LiveView> {
     final bottomH = maxBottom == 0 ? 0.0 : cardH + (maxBottom - 1) * offset;
     final totalCreatures = creatureRows.fold(0, (s, r) => s + r.length);
     final totalSpells = spellRows.fold(0, (s, r) => s + r.length);
-    final scroll = SingleChildScrollView(
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.fromLTRB(0, 8, 8, 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Column(
-              mainAxisSize: MainAxisSize.min,
+    final scroll = LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.fromLTRB(0, 8, 0, 8),
+          child: ConstrainedBox(
+            // Spread the columns across the full width instead of leaving a gap
+            constraints: BoxConstraints(minWidth: constraints.maxWidth),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
-                _cardStack(lands, w, offset, onSecondary),
-                _columnLabel('Lands', lands.length, showTargets ? 17 : null),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _cardStack(lands, w, offset),
+                    _columnLabel('Lands', lands.length, showTargets ? 17 : null),
+                  ],
+                ),
+                for (final c in costs)
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (topH > 0)
+                        SizedBox(
+                          height: topH,
+                          width: w,
+                          child: Align(alignment: Alignment.bottomCenter, child: _cardStack(spellRows[c], w, offset)),
+                        ),
+                      if (topH > 0 && bottomH > 0) const SizedBox(height: 6),
+                      if (bottomH > 0)
+                        SizedBox(
+                          height: bottomH,
+                          width: w,
+                          child: Align(alignment: Alignment.bottomCenter, child: _cardStack(creatureRows[c], w, offset)),
+                        ),
+                      _columnLabel(c == 7 ? '7+' : '$c', spellRows[c].length + creatureRows[c].length, showTargets ? _curveTarget(c) : null),
+                    ],
+                  ),
               ],
             ),
-            const SizedBox(width: 12),
-            for (final c in costs) ...[
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (topH > 0)
-                    SizedBox(
-                      height: topH,
-                      width: w,
-                      child: Align(alignment: Alignment.bottomCenter, child: _cardStack(spellRows[c], w, offset, onSecondary)),
-                    ),
-                  if (topH > 0 && bottomH > 0) const SizedBox(height: 6),
-                  if (bottomH > 0)
-                    SizedBox(
-                      height: bottomH,
-                      width: w,
-                      child: Align(alignment: Alignment.bottomCenter, child: _cardStack(creatureRows[c], w, offset, onSecondary)),
-                    ),
-                  _columnLabel(c == 7 ? '7+' : '$c', spellRows[c].length + creatureRows[c].length, showTargets ? _curveTarget(c) : null),
-                ],
-              ),
-              const SizedBox(width: 8),
-            ],
-          ],
+          ),
         ),
       ),
     );
@@ -501,8 +499,8 @@ class _LiveViewState extends State<_LiveView> {
     );
   }
 
-  // Cards stacked with their title bars visible, right click moves the card
-  Widget _cardStack(List<CardRating> cards, double w, double offset, void Function(CardRating) onSecondary) {
+  // Cards stacked with their title bars visible
+  Widget _cardStack(List<CardRating> cards, double w, double offset) {
     if (cards.isEmpty) return SizedBox(width: w);
     final h = w * 1.4 + (cards.length - 1) * offset;
     return SizedBox(
@@ -517,12 +515,9 @@ class _LiveViewState extends State<_LiveView> {
                 card: cards[i],
                 zoomWidth: _zoomSize,
                 enabled: _zoomEnabled,
-                child: GestureDetector(
-                  onSecondaryTap: () => onSecondary(cards[i]),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: cardImage(cards[i], width: w),
-                  ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: cardImage(cards[i], width: w),
                 ),
               ),
             ),
@@ -594,28 +589,6 @@ class _LiveViewState extends State<_LiveView> {
         behavior: HitTestBehavior.opaque,
         onVerticalDragUpdate: (d) => setState(() {
           _rankSplit = (_rankSplit + d.delta.dy / totalHeight).clamp(0.15, 0.85);
-        }),
-        child: SizedBox(
-          height: 10,
-          child: Center(
-            child: Container(
-              width: 60,
-              height: 4,
-              decoration: BoxDecoration(color: Theme.of(context).dividerColor, borderRadius: BorderRadius.circular(2)),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHSplitter() {
-    return MouseRegion(
-      cursor: SystemMouseCursors.resizeRow,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onVerticalDragUpdate: (d) => setState(() {
-          _poolHeight = (_poolHeight - d.delta.dy).clamp(60.0, MediaQuery.of(context).size.height * 0.75);
         }),
         child: SizedBox(
           height: 10,

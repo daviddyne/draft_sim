@@ -15,6 +15,30 @@ class ScryfallService {
     return map;
   }
 
+  // Basic lands sit in the pack land slot but have no 17lands ratings
+  // Every basic art has its own arena id, so all printings are needed
+  Future<List<(String, String, int)>> fetchBasicLands(String setCode) async {
+    final result = <(String, String, int)>[];
+    var url = 'https://api.scryfall.com/cards/search'
+        '?q=${Uri.encodeQueryComponent('set:$setCode type:basic game:arena')}&unique=prints';
+    while (true) {
+      final response = await http.get(Uri.parse(url), headers: _headers);
+      if (response.statusCode != 200) break;
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      for (final card in (body['data'] as List? ?? [])) {
+        final id = (card['arena_id'] as num?)?.toInt();
+        if (id == null) continue;
+        result.add((card['name'] as String, (card['image_uris']?['normal'] ?? '') as String, id));
+      }
+      if (body['has_more'] == true && body['next_page'] != null) {
+        url = body['next_page'];
+      } else {
+        break;
+      }
+    }
+    return result;
+  }
+
   Future<void> _addSet(Map<String, (int, String, String, String, int?)> map, String query) async {
     var url = 'https://api.scryfall.com/cards/search?q=${Uri.encodeQueryComponent(query)}&unique=cards';
     while (true) {
