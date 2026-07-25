@@ -6,13 +6,28 @@ class ScryfallService {
   static const _headers = {'User-Agent': 'DraftSim/1.0', 'Accept': 'application/json'};
 
   // Returns card name -> (mana value, type line, oracle text, image url, arena id) for a whole set
-  // Arena printings carry the arena ids, plain printings fill in cards missing from Arena
+  // Some sets add cards from bonus sheets, so those are fetched alongside the main set
   Future<Map<String, (int, String, String, String, int?)>> fetchSetInfo(String setCode) async {
     final map = <String, (int, String, String, String, int?)>{};
-    for (final q in ['set:spg game:arena', 'set:$setCode', 'set:$setCode game:arena']) {
+    // Main set last so it wins any name collision with a bonus sheet reprint
+    for (final q in [...['spg', ..._bonusSheets(setCode)].map((s) => 'set:$s game:arena'), 'set:$setCode', 'set:$setCode game:arena']) {
       await _addSet(map, q);
     }
     return map;
+  }
+
+  // Bonus sheets that appear in a given set's draft packs
+  List<String> _bonusSheets(String setCode) {
+    return switch (setCode.toLowerCase()) {
+      'otj' => ['big', 'otp'],
+      'mkm' => ['clu'],
+      'woe' => ['wot'],
+      'lci' => ['rex'],
+      'mom' => ['mul'],
+      'bro' => ['brr'],
+      'dmu' => ['dmr'],
+      _ => const [],
+    };
   }
 
   // Basic lands sit in the pack land slot but have no 17lands ratings
