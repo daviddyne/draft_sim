@@ -1,7 +1,8 @@
 import 'dart:convert';
-import 'dart:io';
+import 'dart:typed_data';
 import 'package:draft_sim/Models/card_rating.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:hive_ce_flutter/adapters.dart';
+
 
 class CachedSet {
   final String setCode;
@@ -12,34 +13,48 @@ class CachedSet {
   const CachedSet(this.setCode, this.eventType, this.cardCount, this.downloaded);
 }
 
+// Stores downloaded sets in Hive, which is files on desktop and IndexedDB on web
 class CardCacheService {
-  Directory? _dir;
+  static const _setsBox = 'sets';
+  static const _imagesBox = 'images';
+  static const _metaBox = 'meta';
 
-  Future<Directory> _cacheDir() async {
-    if (_dir != null) return _dir!;
-    final base = await getApplicationSupportDirectory();
-    final dir = Directory('${base.path}/sets');
-    if (!dir.existsSync()) dir.createSync(recursive: true);
-    _dir = dir;
-    return dir;
+  // Call once at startup before any cache use
+  static Future<void> init() async {
+    await Hive.initFlutter();
+    await Future.wait([
+      Hive.openBox<String>(_setsBox),
+      Hive.openBox<Uint8List>(_imagesBox),
+      Hive.openBox<String>(_metaBox),
+    ]);
   }
 
-  String _fileName(String setCode, String eventType, {bool lands = false}) {
-    return '${setCode.toUpperCase()}_$eventType${lands ? '_lands' : ''}.json';
+  Box<String> get _sets => Hive.box<String>(_setsBox);
+  Box<Uint8List> get _images => Hive.box<Uint8List>(_imagesBox);
+  Box<String> get _meta => Hive.box<String>(_metaBox);
+
+  String _key(String setCode, String eventType, {bool lands = false}) {
+    return '${setCode.toUpperCase()}_$eventType${lands ? '_lands' : ''}';
+  }
+
+  // Image key from the card name, so it survives Scryfall changing its urls
+  // Names are unique enough across sets, and reprints share the same art anyway
+  String imageKey(String cardName) {
+    return cardName.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
   }
 
   Future<void> save(String setCode, String eventType, List<CardRating> cards, {bool lands = false}) async {
-    final dir = await _cacheDir();
-    final file = File('${dir.path}/${_fileName(setCode, eventType, lands: lands)}');
-    await file.writeAsString(jsonEncode([for (final c in cards) c.toCache()]));
+    await _sets.put(_key(setCode, eventType, lands: lands), jsonEncode([for (final c in cards) c.toCache()]));
+    if (!lands) {
+      await _meta.put(_key(setCode, eventType), DateTime.now().toIso8601String());
+    }
   }
 
   Future<List<CardRating>?> load(String setCode, String eventType, {bool lands = false}) async {
+    final raw = _sets.get(_key(setCode, eventType, lands: lands));
+    if (raw == null) return null;
     try {
-      final dir = await _cacheDir();
-      final file = File('${dir.path}/${_fileName(setCode, eventType, lands: lands)}');
-      if (!file.existsSync()) return null;
-      final list = jsonDecode(await file.readAsString()) as List;
+      final list = jsonDecode(raw) as List;
       return [for (final e in list) CardRating.fromCache(e as Map<String, dynamic>)];
     } catch (_) {
       return null;
@@ -48,71 +63,39 @@ class CardCacheService {
 
   // Everything downloaded so far, for the start screen list
   Future<List<CachedSet>> listCached() async {
-    final dir = await _cacheDir();
     final result = <CachedSet>[];
-    for (final f in dir.listSync().whereType<File>()) {
-      final name = f.uri.pathSegments.last;
-      if (!name.endsWith('.json') || name.contains('_lands')) continue;
-      final parts = name.replaceAll('.json', '').split('_');
+    for (final key in _sets.keys.cast<String>()) {
+      if (key.endsWith('_lands')) continue;
+      final parts = key.split('_');
       if (parts.length < 2) continue;
       var count = 0;
       try {
-        count = (jsonDecode(f.readAsStringSync()) as List).length;
+        count = (jsonDecode(_sets.get(key)!) as List).length;
       } catch (_) {
         continue;
       }
-      result.add(CachedSet(parts[0], parts[1], count, f.lastModifiedSync()));
+      final when = DateTime.tryParse(_meta.get(key) ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+      result.add(CachedSet(parts[0], parts[1], count, when));
     }
     result.sort((a, b) => b.downloaded.compareTo(a.downloaded));
     return result;
   }
 
+  // Removes the set and the art of the cards it contains
   Future<void> delete(String setCode, String eventType) async {
-    final dir = await _cacheDir();
-    for (final lands in [false, true]) {
-      final file = File('${dir.path}/${_fileName(setCode, eventType, lands: lands)}');
-      if (file.existsSync()) await file.delete();
-    }
-    final images = Directory('${dir.path}/images/${setCode.toUpperCase()}');
-    if (images.existsSync()) await images.delete(recursive: true);
+    final cards = await load(setCode, eventType) ?? const <CardRating>[];
+    final lands = await load(setCode, eventType, lands: true) ?? const <CardRating>[];
+    await _images.deleteAll([for (final c in [...cards, ...lands]) imageKey(c.name)]);
+    await _sets.delete(_key(setCode, eventType));
+    await _sets.delete(_key(setCode, eventType, lands: true));
+    await _meta.delete(_key(setCode, eventType));
   }
 
-  Future<Directory> _imageDir(String setCode) async {
-    final dir = await _cacheDir();
-    final images = Directory('${dir.path}/images/${setCode.toUpperCase()}');
-    if (!images.existsSync()) images.createSync(recursive: true);
-    return images;
-  }
+  bool hasImage(String cardName) => _images.containsKey(imageKey(cardName));
 
-  // File name from the card name, so it survives Scryfall changing its urls
-  String _imageName(String cardName) {
-    return '${cardName.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_')}.jpg';
-  }
+  Uint8List? image(String cardName) => _images.get(imageKey(cardName));
 
-  Future<String> imagePath(String setCode, String cardName) async {
-    final dir = await _imageDir(setCode);
-    return '${dir.path}/${_imageName(cardName)}';
-  }
-
-  Future<void> saveImage(String setCode, String cardName, List<int> bytes) async {
-    final path = await imagePath(setCode, cardName);
-    await File(path).writeAsBytes(bytes);
-  }
-
-  // Points cards at downloaded art where it exists, leaves the url otherwise
-  Future<List<CardRating>> applyLocalImages(String setCode, List<CardRating> cards) async {
-    final dir = Directory('${(await _cacheDir()).path}/images/${setCode.toUpperCase()}');
-    if (!dir.existsSync()) return cards;
-    final present = {for (final f in dir.listSync().whereType<File>()) f.uri.pathSegments.last};
-    return [
-      for (final c in cards)
-        if (present.contains(_imageName(c.name))) c.withLocalImage('${dir.path}/${_imageName(c.name)}') else c,
-    ];
-  }
-
-  Future<int> imageCount(String setCode) async {
-    final dir = Directory('${(await _cacheDir()).path}/images/${setCode.toUpperCase()}');
-    if (!dir.existsSync()) return 0;
-    return dir.listSync().whereType<File>().length;
+  Future<void> saveImage(String cardName, Uint8List bytes) async {
+    await _images.put(imageKey(cardName), bytes);
   }
 }

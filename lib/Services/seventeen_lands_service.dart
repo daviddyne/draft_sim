@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:draft_sim/Models/card_rating.dart';
 import 'package:draft_sim/Services/card_cache_service.dart';
 import 'package:draft_sim/Services/scryfall_service.dart';
@@ -27,11 +26,11 @@ class SeventeenLandsService {
     String timePeriod = 'ALL_TIME',
     bool save = false}) async {
     final stored = await cache.load(setCode, eventType);
-    if (stored != null && stored.isNotEmpty) return cache.applyLocalImages(setCode, stored);
+    if (stored != null && stored.isNotEmpty) return stored;
     try {
       final cards = await _fetchOnline(setCode, eventType, timePeriod);
       if (save) await cache.save(setCode, eventType, cards);
-      return cache.applyLocalImages(setCode, cards);
+      return cards;
     } catch (e) {
       rethrow;
     }
@@ -64,7 +63,7 @@ class SeventeenLandsService {
   Future<List<CardRating>> fetchBasicLands(String setCode, {String eventType = 'PremierDraft', bool save = false}) async {
     if (!save) {
       final stored = await cache.load(setCode, eventType, lands: true);
-      if (stored != null && stored.isNotEmpty) return cache.applyLocalImages(setCode, stored);
+      if (stored != null && stored.isNotEmpty) return stored;
     }
     final lands = await _scryfall.fetchBasicLands(setCode);
     final cards = [
@@ -79,7 +78,7 @@ class SeventeenLandsService {
         ),
     ];
     if (save) await cache.save(setCode, eventType, cards, lands: true);
-    return cache.applyLocalImages(setCode, cards);
+    return cards;
   }
 
   // Downloads a set for offline use, including card images
@@ -103,7 +102,7 @@ class SeventeenLandsService {
     final todo = <CardRating>[];
     for (final c in cards) {
       if (!c.imageUrl.startsWith('http')) continue;
-      if (File(await cache.imagePath(setCode, c.name)).existsSync()) continue;
+      if (cache.hasImage(c.name)) continue;
       todo.add(c);
     }
     var done = 0;
@@ -115,7 +114,7 @@ class SeventeenLandsService {
           () async {
             try {
               final r = await http.get(Uri.parse(card.imageUrl)).timeout(_timeout);
-              if (r.statusCode == 200) await cache.saveImage(setCode, card.name, r.bodyBytes);
+              if (r.statusCode == 200) await cache.saveImage(card.name, r.bodyBytes);
             } catch (_) {
               // One missing image shouldn't stop the download
             }

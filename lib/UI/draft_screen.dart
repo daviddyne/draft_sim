@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:draft_sim/Logic/draft_cubit.dart';
 import 'package:draft_sim/Models/card_rating.dart';
 import 'package:draft_sim/Services/card_cache_service.dart';
@@ -12,8 +10,8 @@ import 'live_draft_screen.dart';
 
 enum RankStat { gihwr, iwd, alsa }
 
-// Card image from the network, or from a downloaded file when the set is cached
-// Shows a named placeholder if the image can't be loaded
+// Downloaded art if the card has been cached, otherwise straight from the web
+// Shows a named placeholder if the image can't be loaded at all
 Widget cardImage(CardRating card, {double? width, BoxFit? fit}) {
   Widget fallback(BuildContext context, Object error, StackTrace? stack) => SizedBox(
         width: width,
@@ -27,11 +25,12 @@ Widget cardImage(CardRating card, {double? width, BoxFit? fit}) {
           ),
         ),
       );
-  if (!card.imageUrl.startsWith('http')) {
-    return Image.file(File(card.imageUrl), width: width, fit: fit, errorBuilder: fallback);
-  }
+  final bytes = _imageCache.image(card.name);
+  if (bytes != null) return Image.memory(bytes, width: width, fit: fit, errorBuilder: fallback);
   return Image.network(card.imageUrl, width: width, fit: fit, errorBuilder: fallback);
 }
+
+final _imageCache = CardCacheService();
 
 class DraftScreen extends StatelessWidget {
   // Optional, lets other screens open the draft setup ready for a set
