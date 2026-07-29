@@ -68,6 +68,8 @@ class _BrowseViewState extends State<_BrowseView> {
   // Cards clicked away so they don't drag the averages
   final Set<String> _excluded = {};
   RankStat _rankStat = RankStat.gihwr;
+  // Filters below the search row can be collapsed for more card space
+  bool _showFilters = true;
   // Deck being built from the browsed cards
   final List<CardRating> _deck = [];
   final List<CardRating> _side = [];
@@ -93,6 +95,11 @@ class _BrowseViewState extends State<_BrowseView> {
       appBar: AppBar(
         title: Text('${widget.setCode.toUpperCase()} card browser'),
         actions: [
+          IconButton(
+            tooltip: _showFilters ? 'Hide filters' : 'Show filters',
+            icon: Icon(_showFilters ? Icons.filter_alt : Icons.filter_alt_off),
+            onPressed: () => setState(() => _showFilters = !_showFilters),
+          ),
           IconButton(
             tooltip: 'Draft this set',
             icon: const Icon(Icons.play_circle_outline),
@@ -227,68 +234,72 @@ class _BrowseViewState extends State<_BrowseView> {
                   ],
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-                child: Wrap(
-                  spacing: 4,
-                  runSpacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text('Type', style: Theme.of(context).textTheme.labelLarge),
-                    for (final t in allTypes)
-                      Opacity(
-                        opacity: availableTypes.contains(t) ? 1 : 0.35,
-                        child: FilterChip(
-                          label: Text(t),
-                          visualDensity: VisualDensity.compact,
-                          selected: _types.contains(t),
-                          onSelected: (on) => setState(() {
-                            on ? _types.add(t) : _types.remove(t);
+              if (_showFilters)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+                  child: Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        'Type',
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                      for (final t in allTypes)
+                        Opacity(
+                          opacity: availableTypes.contains(t) ? 1 : 0.35,
+                          child: FilterChip(
+                            label: Text(t),
+                            visualDensity: VisualDensity.compact,
+                            selected: _types.contains(t),
+                            onSelected: (on) => setState(() {
+                              on ? _types.add(t) : _types.remove(t);
+                              _syncColors(state.cards);
+                            }),
+                          ),
+                        ),
+                      const SizedBox(width: 12),
+                      Text(
+                        'Rarity',
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                      for (final (r, label, color) in allRarities)
+                        Opacity(
+                          opacity: availableRarities.contains(r) ? 1 : 0.35,
+                          child: FilterChip(
+                            label: Text(label),
+                            visualDensity: VisualDensity.compact,
+                            selected: _rarities.contains(r),
+                            selectedColor: color.withValues(alpha: 0.5),
+                            onSelected: (on) => setState(() {
+                              on ? _rarities.add(r) : _rarities.remove(r);
+                              _syncColors(state.cards);
+                            }),
+                          ),
+                        ),
+                      const SizedBox(width: 12),
+                      Text(
+                        _minGih == 0
+                            ? 'Min GIH: off'
+                            : 'Min GIH: ${_minGih.toStringAsFixed(1)}%',
+                        style: Theme.of(context).textTheme.labelLarge,
+                      ),
+                      SizedBox(
+                        width: 180,
+                        child: Slider(
+                          value: _minGih,
+                          min: 0,
+                          max: 70,
+                          onChanged: (v) => setState(() {
+                            _minGih = v;
                             _syncColors(state.cards);
                           }),
                         ),
                       ),
-                    const SizedBox(width: 12),
-                    Text(
-                      'Rarity',
-                      style: Theme.of(context).textTheme.labelLarge,
-                    ),
-                    for (final (r, label, color) in allRarities)
-                      Opacity(
-                        opacity: availableRarities.contains(r) ? 1 : 0.35,
-                        child: FilterChip(
-                          label: Text(label),
-                          visualDensity: VisualDensity.compact,
-                          selected: _rarities.contains(r),
-                          selectedColor: color.withValues(alpha: 0.5),
-                          onSelected: (on) => setState(() {
-                            on ? _rarities.add(r) : _rarities.remove(r);
-                            _syncColors(state.cards);
-                          }),
-                        ),
-                      ),
-                    const SizedBox(width: 12),
-                    Text(
-                      _minGih == 0
-                          ? 'Min GIH: off'
-                          : 'Min GIH: ${_minGih.toStringAsFixed(1)}%',
-                      style: Theme.of(context).textTheme.labelLarge,
-                    ),
-                    SizedBox(
-                      width: 180,
-                      child: Slider(
-                        value: _minGih,
-                        min: 0,
-                        max: 70,
-                        onChanged: (v) => setState(() {
-                          _minGih = v;
-                          _syncColors(state.cards);
-                        }),
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
               _buildSummary(context, filtered),
               const Divider(height: 1),
               Expanded(
@@ -370,6 +381,9 @@ class _BrowseViewState extends State<_BrowseView> {
             // Left click builds the deck, right click puts the card in the sideboard
             onTap: () => setState(() => _deck.add(card)),
             onSecondaryTap: () => setState(() => _side.add(card)),
+            // Two fingers stand in for a right click on touch
+            onScaleStart: (d) =>
+                d.pointerCount >= 2 ? setState(() => _side.add(card)) : null,
             child: Opacity(
               opacity: excluded ? 0.35 : 1,
               child: ClipRRect(
@@ -760,7 +774,8 @@ class _BrowseViewState extends State<_BrowseView> {
   }
 
   // Curve view: lands far left, columns by cost with spells on top, creatures below
-  // Left click removes a card, right click moves it to the other side
+  // Cards are scaled to fit the area so every column stays visible
+  // Left click removes a card, right click or long press moves it across
   Widget _curve(
     List<CardRating> cards, {
     required bool showTargets,
@@ -768,9 +783,6 @@ class _BrowseViewState extends State<_BrowseView> {
     required void Function(CardRating) onTap,
     required void Function(CardRating) onSecondary,
   }) {
-    final w = _cardSize * 0.47;
-    final offset = w * 0.15;
-    final cardH = w * 1.4;
     if (cards.isEmpty) return Center(child: Text(emptyText));
     final lands = _sortedPool(cards.where((c) => c.isLand).toList());
     final costs = List.generate(8, (i) => i);
@@ -793,107 +805,132 @@ class _BrowseViewState extends State<_BrowseView> {
     int maxLen(List<List<CardRating>> rows) =>
         rows.fold(0, (m, r) => r.length > m ? r.length : m);
     final maxTop = maxLen(spellRows);
-    final maxBottom = maxLen(creatureRows);
-    final topH = maxTop == 0 ? 0.0 : cardH + (maxTop - 1) * offset;
-    final bottomH = maxBottom == 0 ? 0.0 : cardH + (maxBottom - 1) * offset;
+    final maxBottom = maxLen(
+      [
+        creatureRows,
+        [lands],
+      ].expand((e) => e).toList(),
+    );
     final creatures = creatureRows.fold(0, (s, r) => s + r.length);
     final spells = spellRows.fold(0, (s, r) => s + r.length);
     final nonLands = cards.where((c) => !c.isLand).toList();
     final avgCost = nonLands.isEmpty
         ? null
         : nonLands.fold(0, (s, c) => s + c.cmc) / nonLands.length;
-    final scroll = LayoutBuilder(
-      builder: (context, constraints) => SingleChildScrollView(
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.fromLTRB(0, 8, 0, 8),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(minWidth: constraints.maxWidth),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                Column(
+    return LayoutBuilder(
+      builder: (context, box) {
+        final w = _fitCardWidth(box, maxTop, maxBottom, showTargets);
+        final offset = w * 0.15;
+        final cardH = w * 1.4;
+        final topH = maxTop == 0 ? 0.0 : cardH + (maxTop - 1) * offset;
+        final bottomH = maxBottom == 0 ? 0.0 : cardH + (maxBottom - 1) * offset;
+        final grid = Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (topH > 0) SizedBox(height: topH),
+                  if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
+                  SizedBox(
+                    height: bottomH,
+                    child: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: _cardStack(lands, w, offset, onTap, onSecondary),
+                    ),
+                  ),
+                  _columnLabel('Lands', lands.length, showTargets ? 17 : null),
+                ],
+              ),
+            ),
+            for (final c in costs)
+              Expanded(
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _cardStack(lands, w, offset, onTap, onSecondary),
+                    if (topH > 0)
+                      SizedBox(
+                        height: topH,
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: _cardStack(
+                            spellRows[c],
+                            w,
+                            offset,
+                            onTap,
+                            onSecondary,
+                          ),
+                        ),
+                      ),
+                    if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
+                    if (bottomH > 0)
+                      SizedBox(
+                        height: bottomH,
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: _cardStack(
+                            creatureRows[c],
+                            w,
+                            offset,
+                            onTap,
+                            onSecondary,
+                          ),
+                        ),
+                      ),
                     _columnLabel(
-                      'Lands',
-                      lands.length,
-                      showTargets ? 17 : null,
+                      c == 7 ? '7+' : '$c',
+                      spellRows[c].length + creatureRows[c].length,
+                      showTargets ? _curveTarget(c) : null,
                     ),
                   ],
                 ),
-                for (final c in costs)
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (topH > 0)
-                        SizedBox(
-                          height: topH,
-                          width: w,
-                          child: Align(
-                            alignment: Alignment.bottomCenter,
-                            child: _cardStack(
-                              spellRows[c],
-                              w,
-                              offset,
-                              onTap,
-                              onSecondary,
-                            ),
-                          ),
-                        ),
-                      if (topH > 0 && bottomH > 0) const SizedBox(height: 6),
-                      if (bottomH > 0)
-                        SizedBox(
-                          height: bottomH,
-                          width: w,
-                          child: Align(
-                            alignment: Alignment.bottomCenter,
-                            child: _cardStack(
-                              creatureRows[c],
-                              w,
-                              offset,
-                              onTap,
-                              onSecondary,
-                            ),
-                          ),
-                        ),
-                      _columnLabel(
-                        c == 7 ? '7+' : '$c',
-                        spellRows[c].length + creatureRows[c].length,
-                        showTargets ? _curveTarget(c) : null,
-                      ),
-                    ],
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-    if (!showTargets) return scroll;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
-          child: Row(
-            children: [
-              _totalLabel('Creatures', creatures, 16),
-              const SizedBox(width: 12),
-              _totalLabel('Noncreatures', spells, 7),
-              const SizedBox(width: 12),
-              Text(
-                'Avg cost ${avgCost == null ? '-' : avgCost.toStringAsFixed(2)}',
-                style: const TextStyle(fontSize: 12),
               ),
-            ],
-          ),
-        ),
-        Expanded(child: scroll),
-      ],
+          ],
+        );
+        if (!showTargets) return SingleChildScrollView(child: grid);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
+              child: Row(
+                children: [
+                  _totalLabel('Creatures', creatures, 16),
+                  const SizedBox(width: 12),
+                  _totalLabel('Noncreatures', spells, 7),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Avg cost ${avgCost == null ? '-' : avgCost.toStringAsFixed(2)}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(child: SingleChildScrollView(child: grid)),
+          ],
+        );
+      },
     );
+  }
+
+  // Largest card width that keeps all nine columns and both rows in view
+  double _fitCardWidth(
+    BoxConstraints box,
+    int maxTop,
+    int maxBottom,
+    bool showTargets,
+  ) {
+    const columns = 9;
+    final byWidth = (box.maxWidth - 8) / columns;
+    final labels = showTargets ? 54.0 : 30.0;
+    final rows =
+        (maxTop == 0 ? 0.0 : 1.4 + 0.15 * (maxTop - 1)) +
+        (maxBottom == 0 ? 0.0 : 1.4 + 0.15 * (maxBottom - 1));
+    final byHeight = rows <= 0 ? byWidth : (box.maxHeight - labels) / rows;
+    final fit = byWidth < byHeight ? byWidth : byHeight;
+    final preferred = _cardSize * 0.47;
+    return (fit < preferred ? fit : preferred).clamp(24.0, 400.0);
   }
 
   Widget _cardStack(
@@ -920,6 +957,9 @@ class _BrowseViewState extends State<_BrowseView> {
                 child: GestureDetector(
                   onTap: () => onTap(cards[i]),
                   onSecondaryTap: () => onSecondary(cards[i]),
+                  // Two fingers stand in for a right click on touch
+                  onScaleStart: (d) =>
+                      d.pointerCount >= 2 ? onSecondary(cards[i]) : null,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(6),
                     child: cardImage(cards[i], width: w),
