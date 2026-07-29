@@ -36,5 +36,8 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add web/data
-          git diff --staged --quiet || git commit -m "Update card data"
+          git diff --staged --quiet && exit 0
+          git commit -m "Update card data"
+          # The run takes a while, so the branch may have moved on meanwhile
+          git pull --rebase
           git push
