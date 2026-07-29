@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:draft_sim/Models/card_rating.dart';
 import 'package:draft_sim/Services/card_cache_service.dart';
 import 'package:draft_sim/Services/scryfall_service.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
 class SetOption {
@@ -14,9 +15,36 @@ class SetOption {
 
 class SeventeenLandsService {
   static const _base = 'https://www.17lands.com/api/card_data';
+  static const _expansions = 'https://www.17lands.com/data/expansions';
+  // 17lands sends no CORS header, so web builds read data committed next to the
+  // app instead. A GitHub Action refreshes those files daily.
+  // A proxy can be used instead: --dart-define=PROXY=https://...
+  static const _proxy = String.fromEnvironment('PROXY');
+  static const _dataBase = String.fromEnvironment('DATA_BASE', defaultValue: 'data');
   static const _timeout = Duration(seconds: 20);
   final ScryfallService _scryfall = ScryfallService();
   final CardCacheService cache = CardCacheService();
+
+  // True when data comes from files next to the app instead of live apis
+  static bool get _static => kIsWeb && _proxy.isEmpty;
+
+  // Wraps a url in the proxy when running in a browser
+  static Uri _url(String target) {
+    if (!kIsWeb || _proxy.isEmpty) return Uri.parse(target);
+    return Uri.parse('$_proxy?url=${Uri.encodeQueryComponent(target)}');
+  }
+
+  // On web without a proxy the data comes from the app's own files
+  static Uri _cardDataUrl(String setCode, String eventType, String timePeriod) {
+    final live = '$_base?expansion=${setCode.toUpperCase()}&event_type=$eventType&time_period=$timePeriod';
+    if (_static) return Uri.parse('$_dataBase/${setCode.toUpperCase()}_$eventType.json');
+    return _url(live);
+  }
+
+  static Uri _expansionsUrl() {
+    if (_static) return Uri.parse('$_dataBase/sets.json');
+    return _url(_expansions);
+  }
 
   // A downloaded set is used as is, even online, so ratings only change when
   // the set is updated on purpose. Without a download it goes to the network.
@@ -37,7 +65,16 @@ class SeventeenLandsService {
   }
 
   Future<List<CardRating>> _fetchOnline(String setCode, String eventType, String timePeriod) async {
-    final uri = Uri.parse('$_base?expansion=${setCode.toUpperCase()}&event_type=$eventType&time_period=$timePeriod');
+    // On web the data is prebuilt and already merged, so no api calls are made
+    if (_static) {
+      final response = await http.get(_cardDataUrl(setCode, eventType, timePeriod)).timeout(_timeout);
+      if (response.statusCode != 200) {
+        throw Exception('No data for $setCode / $eventType');
+      }
+      final list = jsonDecode(response.body) as List;
+      return [for (final e in list) CardRating.fromCache(e as Map<String, dynamic>)];
+    }
+    final uri = _cardDataUrl(setCode, eventType, timePeriod);
     final response = await http.get(uri).timeout(_timeout);
     if (response.statusCode != 200) {
       throw Exception('17lands request failed (${response.statusCode}) for $setCode');
@@ -64,6 +101,12 @@ class SeventeenLandsService {
     if (!save) {
       final stored = await cache.load(setCode, eventType, lands: true);
       if (stored != null && stored.isNotEmpty) return stored;
+    }
+    if (_static) {
+      final response = await http.get(Uri.parse('$_dataBase/${setCode.toUpperCase()}_lands.json')).timeout(_timeout);
+      if (response.statusCode != 200) return const [];
+      final list = jsonDecode(response.body) as List;
+      return [for (final e in list) CardRating.fromCache(e as Map<String, dynamic>)];
     }
     final lands = await _scryfall.fetchBasicLands(setCode);
     final cards = [
@@ -127,9 +170,16 @@ class SeventeenLandsService {
 
   // Set list for the start screen dropdown, full names come from Scryfall
   Future<List<SetOption>> fetchSets() async {
-    final response = await http.get(Uri.parse('https://www.17lands.com/data/expansions')).timeout(_timeout);
+    final response = await http.get(_expansionsUrl()).timeout(_timeout);
     if (response.statusCode != 200) {
       throw Exception('Could not load the 17lands set list');
+    }
+    if (_static) {
+      final list = jsonDecode(response.body) as List;
+      return [
+        for (final e in list)
+          SetOption(e['code'] as String, (e['name'] ?? e['code']) as String, (e['released'] ?? '') as String),
+      ];
     }
     final body = jsonDecode(response.body);
     final codes = (body is List ? body : body['expansions'] as List).cast<String>();
