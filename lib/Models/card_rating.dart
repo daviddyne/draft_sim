@@ -56,6 +56,23 @@ class CardRating {
     );
   }
 
+  // Same card but pointing at a downloaded image file
+  CardRating withLocalImage(String path) {
+    return CardRating(
+      name: name,
+      color: color,
+      rarity: rarity,
+      imageUrl: path,
+      gihwr: gihwr,
+      iwd: iwd,
+      alsa: alsa,
+      cmc: cmc,
+      typeLine: typeLine,
+      oracleText: oracleText,
+      arenaId: arenaId,
+    );
+  }
+
   Map<String, dynamic> toCache() {
     return {
       'name': name,

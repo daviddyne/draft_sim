@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:draft_sim/Models/card_rating.dart';
 import 'package:path_provider/path_provider.dart';
 
-
 class CachedSet {
   final String setCode;
   final String eventType;
@@ -74,5 +73,46 @@ class CardCacheService {
       final file = File('${dir.path}/${_fileName(setCode, eventType, lands: lands)}');
       if (file.existsSync()) await file.delete();
     }
+    final images = Directory('${dir.path}/images/${setCode.toUpperCase()}');
+    if (images.existsSync()) await images.delete(recursive: true);
+  }
+
+  Future<Directory> _imageDir(String setCode) async {
+    final dir = await _cacheDir();
+    final images = Directory('${dir.path}/images/${setCode.toUpperCase()}');
+    if (!images.existsSync()) images.createSync(recursive: true);
+    return images;
+  }
+
+  // File name from the card name, so it survives Scryfall changing its urls
+  String _imageName(String cardName) {
+    return '${cardName.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_')}.jpg';
+  }
+
+  Future<String> imagePath(String setCode, String cardName) async {
+    final dir = await _imageDir(setCode);
+    return '${dir.path}/${_imageName(cardName)}';
+  }
+
+  Future<void> saveImage(String setCode, String cardName, List<int> bytes) async {
+    final path = await imagePath(setCode, cardName);
+    await File(path).writeAsBytes(bytes);
+  }
+
+  // Points cards at downloaded art where it exists, leaves the url otherwise
+  Future<List<CardRating>> applyLocalImages(String setCode, List<CardRating> cards) async {
+    final dir = Directory('${(await _cacheDir()).path}/images/${setCode.toUpperCase()}');
+    if (!dir.existsSync()) return cards;
+    final present = {for (final f in dir.listSync().whereType<File>()) f.uri.pathSegments.last};
+    return [
+      for (final c in cards)
+        if (present.contains(_imageName(c.name))) c.withLocalImage('${dir.path}/${_imageName(c.name)}') else c,
+    ];
+  }
+
+  Future<int> imageCount(String setCode) async {
+    final dir = Directory('${(await _cacheDir()).path}/images/${setCode.toUpperCase()}');
+    if (!dir.existsSync()) return 0;
+    return dir.listSync().whereType<File>().length;
   }
 }

@@ -7,6 +7,23 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'draft_screen.dart';
 
+const allTypes = [
+  'Creature',
+  'Instant',
+  'Sorcery',
+  'Artifact',
+  'Enchantment',
+  'Planeswalker',
+  'Land',
+  'Battle',
+];
+const allRarities = [
+  ('common', 'Common', Color(0xFF9E9E9E)),
+  ('uncommon', 'Uncommon', Color(0xFFB0C4DE)),
+  ('rare', 'Rare', Color(0xFFD4AF37)),
+  ('mythic', 'Mythic', Color(0xFFE86A33)),
+];
+
 class BrowseScreen extends StatelessWidget {
   final String setCode;
   final String eventType;
@@ -22,15 +39,16 @@ class BrowseScreen extends StatelessWidget {
     return BlocProvider(
       create: (_) =>
           BrowseCubit(SeventeenLandsService())..load(setCode, eventType),
-      child: _BrowseView(setCode: setCode),
+      child: _BrowseView(setCode: setCode, eventType: eventType),
     );
   }
 }
 
 class _BrowseView extends StatefulWidget {
   final String setCode;
+  final String eventType;
 
-  const _BrowseView({required this.setCode});
+  const _BrowseView({required this.setCode, required this.eventType});
 
   @override
   State<_BrowseView> createState() => _BrowseViewState();
@@ -68,6 +86,18 @@ class _BrowseViewState extends State<_BrowseView> {
       appBar: AppBar(
         title: Text('${widget.setCode.toUpperCase()} card browser'),
         actions: [
+          IconButton(
+            tooltip: 'Draft this set',
+            icon: const Icon(Icons.play_circle_outline),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => DraftScreen(
+                  setCode: widget.setCode,
+                  eventType: widget.eventType,
+                ),
+              ),
+            ),
+          ),
           const Icon(Icons.photo_size_select_large, size: 18),
           Tooltip(
             message: 'Card size',
@@ -119,6 +149,10 @@ class _BrowseViewState extends State<_BrowseView> {
             );
           }
           final filtered = _ranked(_filtered(state.cards));
+          // Chips stay in place, dimmed when nothing matching them is left
+          final availableTypes = _availableTypes(state.cards);
+          final availableRarities = _availableRarities(state.cards);
+          final availableColors = _availableColors(state.cards);
           return Column(
             children: [
               Padding(
@@ -134,46 +168,53 @@ class _BrowseViewState extends State<_BrowseView> {
                           isDense: true,
                           border: OutlineInputBorder(),
                         ),
-                        onChanged: (_) => setState(() {}),
+                        onChanged: (_) =>
+                            setState(() => _syncColors(state.cards)),
                       ),
                     ),
                     const SizedBox(width: 12),
                     for (final c in ['W', 'U', 'B', 'R', 'G', 'C'])
                       Padding(
                         padding: const EdgeInsets.only(right: 4),
-                        child: FilterChip(
-                          label: Text(c),
-                          selected: _colors.contains(c),
-                          selectedColor: _manaColor(c).withValues(alpha: 0.5),
-                          onSelected: (on) => setState(() {
-                            // Plain click selects only this color, ctrl click adds or removes
-                            final ctrl =
-                                HardwareKeyboard.instance.isControlPressed;
-                            if (ctrl) {
-                              on ? _colors.add(c) : _colors.remove(c);
-                              if (on) _multicolor = true;
-                            } else {
-                              final wasOnlyThis =
-                                  _colors.length == 1 && _colors.contains(c);
-                              _colors.clear();
-                              if (!wasOnlyThis) {
-                                _colors.add(c);
-                                _multicolor = true;
+                        child: Opacity(
+                          opacity: availableColors.contains(c) ? 1 : 0.35,
+                          child: FilterChip(
+                            label: Text(c),
+                            selected: _colors.contains(c),
+                            selectedColor: _manaColor(c).withValues(alpha: 0.5),
+                            onSelected: (on) => setState(() {
+                              // Plain click selects only this color, ctrl click adds or removes
+                              final ctrl =
+                                  HardwareKeyboard.instance.isControlPressed;
+                              if (ctrl) {
+                                on ? _colors.add(c) : _colors.remove(c);
+                                if (on) _multicolor = true;
+                              } else {
+                                final wasOnlyThis =
+                                    _colors.length == 1 && _colors.contains(c);
+                                _colors.clear();
+                                if (!wasOnlyThis) {
+                                  _colors.add(c);
+                                  _multicolor = true;
+                                }
                               }
-                            }
-                            if (_colors.isEmpty) _multicolor = false;
-                          }),
+                              if (_colors.isEmpty) _multicolor = false;
+                            }),
+                          ),
                         ),
                       ),
                     Padding(
                       padding: const EdgeInsets.only(right: 4),
-                      child: FilterChip(
-                        label: const Text('Multi'),
-                        selected: _multicolor,
-                        selectedColor: const Color(
-                          0xFFD4AF37,
-                        ).withValues(alpha: 0.5),
-                        onSelected: (on) => setState(() => _multicolor = on),
+                      child: Opacity(
+                        opacity: availableColors.contains('Multi') ? 1 : 0.35,
+                        child: FilterChip(
+                          label: const Text('Multi'),
+                          selected: _multicolor,
+                          selectedColor: const Color(
+                            0xFFD4AF37,
+                          ).withValues(alpha: 0.5),
+                          onSelected: (on) => setState(() => _multicolor = on),
+                        ),
                       ),
                     ),
                   ],
@@ -185,22 +226,18 @@ class _BrowseViewState extends State<_BrowseView> {
                   children: [
                     Text('Type', style: Theme.of(context).textTheme.labelLarge),
                     const SizedBox(width: 8),
-                    for (final t in const [
-                      'Creature',
-                      'Instant',
-                      'Sorcery',
-                      'Artifact',
-                      'Enchantment',
-                      'Planeswalker',
-                      'Land',
-                    ])
+                    for (final t in allTypes)
                       Padding(
                         padding: const EdgeInsets.only(right: 4),
-                        child: FilterChip(
-                          label: Text(t),
-                          selected: _types.contains(t),
-                          onSelected: (on) => setState(
-                            () => on ? _types.add(t) : _types.remove(t),
+                        child: Opacity(
+                          opacity: availableTypes.contains(t) ? 1 : 0.35,
+                          child: FilterChip(
+                            label: Text(t),
+                            selected: _types.contains(t),
+                            onSelected: (on) => setState(() {
+                              on ? _types.add(t) : _types.remove(t);
+                              _syncColors(state.cards);
+                            }),
                           ),
                         ),
                       ),
@@ -216,20 +253,19 @@ class _BrowseViewState extends State<_BrowseView> {
                       style: Theme.of(context).textTheme.labelLarge,
                     ),
                     const SizedBox(width: 8),
-                    for (final (r, label, color) in const [
-                      ('common', 'Common', Color(0xFF9E9E9E)),
-                      ('uncommon', 'Uncommon', Color(0xFFB0C4DE)),
-                      ('rare', 'Rare', Color(0xFFD4AF37)),
-                      ('mythic', 'Mythic', Color(0xFFE86A33)),
-                    ])
+                    for (final (r, label, color) in allRarities)
                       Padding(
                         padding: const EdgeInsets.only(right: 4),
-                        child: FilterChip(
-                          label: Text(label),
-                          selected: _rarities.contains(r),
-                          selectedColor: color.withValues(alpha: 0.5),
-                          onSelected: (on) => setState(
-                            () => on ? _rarities.add(r) : _rarities.remove(r),
+                        child: Opacity(
+                          opacity: availableRarities.contains(r) ? 1 : 0.35,
+                          child: FilterChip(
+                            label: Text(label),
+                            selected: _rarities.contains(r),
+                            selectedColor: color.withValues(alpha: 0.5),
+                            onSelected: (on) => setState(() {
+                              on ? _rarities.add(r) : _rarities.remove(r);
+                              _syncColors(state.cards);
+                            }),
                           ),
                         ),
                       ),
@@ -246,7 +282,10 @@ class _BrowseViewState extends State<_BrowseView> {
                         value: _minGih,
                         min: 0,
                         max: 70,
-                        onChanged: (v) => setState(() => _minGih = v),
+                        onChanged: (v) => setState(() {
+                          _minGih = v;
+                          _syncColors(state.cards);
+                        }),
                       ),
                     ),
                   ],
@@ -498,38 +537,122 @@ class _BrowseViewState extends State<_BrowseView> {
     );
   }
 
-  List<CardRating> _filtered(List<CardRating> cards) {
-    final q = _searchController.text.trim().toLowerCase();
-    return cards.where((c) {
-      if (q.isNotEmpty &&
-          !c.name.toLowerCase().contains(q) &&
-          !c.typeLine.toLowerCase().contains(q) &&
-          !c.oracleText.toLowerCase().contains(q)) {
-        return false;
-      }
-      if (_rarities.isNotEmpty && !_rarities.contains(c.rarity)) return false;
-      // Match against the front face so spell//land backsides don't count as lands
-      if (_types.isNotEmpty &&
-          !_types.any((t) => c.typeLine.split(' // ').first.contains(t))) {
-        return false;
-      }
-      // With a floor set, unrated cards (low sample) are dropped too
-      if (_minGih > 0 && (c.gihwr == null || c.gihwr! * 100 < _minGih)) {
-        return false;
-      }
-      // Colorless cards
+  // Which filters the current results contain, used to dim the rest
+  // Each row ignores its own filter, otherwise picking one dims all the others
+  Set<String> _availableTypes(List<CardRating> cards) {
+    final base = [
+      for (final c in cards)
+        if (_passesNonColor(c, ignoreTypes: true) && _passesColor(c)) c,
+    ];
+    return {
+      for (final t in allTypes)
+        if (base.any((c) => c.typeLine.split(' // ').first.contains(t))) t,
+    };
+  }
+
+  Set<String> _availableRarities(List<CardRating> cards) {
+    final base = [
+      for (final c in cards)
+        if (_passesNonColor(c, ignoreRarities: true) && _passesColor(c)) c,
+    ];
+    return {
+      for (final r in allRarities)
+        if (base.any((c) => c.rarity == r.$1)) r.$1,
+    };
+  }
+
+  Set<String> _availableColors(List<CardRating> cards) {
+    final base = [
+      for (final c in cards)
+        if (_passesNonColor(c)) c,
+    ];
+    final present = <String>{};
+    for (final c in base) {
       if (c.color.isEmpty) {
-        if (_colors.isEmpty) return !_multicolor;
-        return _colors.contains('C');
+        present.add('C');
+      } else {
+        present.addAll(c.color.split(''));
+        if (c.color.length > 1) present.add('Multi');
       }
-      final letters = c.color.split('');
-      // Multicolor toggle alone shows only multicolor cards
-      if (_colors.isEmpty) return !_multicolor || letters.length > 1;
-      // A card matches when all its colors are among the selected ones
-      if (letters.every(_colors.contains)) return true;
-      // With multicolor on, a multicolor card only needs to contain a selected color
-      return _multicolor && letters.length > 1 && letters.any(_colors.contains);
-    }).toList();
+    }
+    return present;
+  }
+
+  List<CardRating> _filtered(List<CardRating> cards) {
+    return [
+      for (final c in cards)
+        if (_passesNonColor(c) && _passesColor(c)) c,
+    ];
+  }
+
+  bool _passesNonColor(
+    CardRating c, {
+    bool ignoreTypes = false,
+    bool ignoreRarities = false,
+  }) {
+    final q = _searchController.text.trim().toLowerCase();
+    if (q.isNotEmpty &&
+        !c.name.toLowerCase().contains(q) &&
+        !c.typeLine.toLowerCase().contains(q) &&
+        !c.oracleText.toLowerCase().contains(q)) {
+      return false;
+    }
+    if (!ignoreRarities &&
+        _rarities.isNotEmpty &&
+        !_rarities.contains(c.rarity)) {
+      return false;
+    }
+    // Match against the front face so spell//land backsides don't count as lands
+    if (!ignoreTypes &&
+        _types.isNotEmpty &&
+        !_types.any((t) => c.typeLine.split(' // ').first.contains(t))) {
+      return false;
+    }
+    // With a floor set, unrated cards (low sample) are dropped too
+    if (_minGih > 0 && (c.gihwr == null || c.gihwr! * 100 < _minGih)) {
+      return false;
+    }
+    return true;
+  }
+
+  bool _passesColor(CardRating c) {
+    // Colorless cards
+    if (c.color.isEmpty) {
+      if (_colors.isEmpty) return !_multicolor;
+      return _colors.contains('C');
+    }
+    final letters = c.color.split('');
+    // Multicolor toggle alone shows only multicolor cards
+    if (_colors.isEmpty) return !_multicolor || letters.length > 1;
+    // A card matches when all its colors are among the selected ones
+    if (letters.every(_colors.contains)) return true;
+    // With multicolor on, a multicolor card only needs to contain a selected color
+    return _multicolor && letters.length > 1 && letters.any(_colors.contains);
+  }
+
+  // When the other filters leave nothing in the chosen colors, switch to the
+  // colors that are actually present instead of showing an empty list
+  void _syncColors(List<CardRating> cards) {
+    if (_colors.isEmpty) return;
+    final base = [
+      for (final c in cards)
+        if (_passesNonColor(c)) c,
+    ];
+    if (base.isEmpty || base.any(_passesColor)) return;
+    final present = <String>{};
+    for (final c in base) {
+      if (c.color.isEmpty) {
+        present.add('C');
+      } else {
+        present.addAll(c.color.split(''));
+      }
+    }
+    setState(() {
+      _colors
+        ..clear()
+        ..addAll(present);
+      _multicolor = true;
+    });
   }
 
   List<CardRating> _ranked(List<CardRating> cards) {

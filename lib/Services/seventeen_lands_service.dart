@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:draft_sim/Models/card_rating.dart';
 import 'package:draft_sim/Services/card_cache_service.dart';
 import 'package:draft_sim/Services/scryfall_service.dart';
@@ -7,8 +8,9 @@ import 'package:http/http.dart' as http;
 class SetOption {
   final String code;
   final String name;
+  final String released;
 
-  const SetOption(this.code, this.name);
+  const SetOption(this.code, this.name, this.released);
 }
 
 class SeventeenLandsService {
@@ -17,19 +19,20 @@ class SeventeenLandsService {
   final ScryfallService _scryfall = ScryfallService();
   final CardCacheService cache = CardCacheService();
 
-  // Uses the network when it can, falls back to a downloaded copy when offline
+  // A downloaded set is used as is, even online, so ratings only change when
+  // the set is updated on purpose. Without a download it goes to the network.
   Future<List<CardRating>> fetchRatings(
     String setCode,
     {String eventType = 'PremierDraft',
     String timePeriod = 'ALL_TIME',
     bool save = false}) async {
+    final stored = await cache.load(setCode, eventType);
+    if (stored != null && stored.isNotEmpty) return cache.applyLocalImages(setCode, stored);
     try {
       final cards = await _fetchOnline(setCode, eventType, timePeriod);
       if (save) await cache.save(setCode, eventType, cards);
-      return cards;
+      return cache.applyLocalImages(setCode, cards);
     } catch (e) {
-      final cached = await cache.load(setCode, eventType);
-      if (cached != null && cached.isNotEmpty) return cached;
       rethrow;
     }
   }
@@ -59,38 +62,68 @@ class SeventeenLandsService {
 
   // Basic lands as rating-less cards, so pack land slots can be shown
   Future<List<CardRating>> fetchBasicLands(String setCode, {String eventType = 'PremierDraft', bool save = false}) async {
-    try {
-      final lands = await _scryfall.fetchBasicLands(setCode);
-      final cards = [
-        for (final (name, img, id) in lands)
-          CardRating(
-            name: name,
-            color: '',
-            rarity: 'basic',
-            imageUrl: img,
-            typeLine: 'Basic Land',
-            arenaId: id,
-          ),
-      ];
-      if (save) await cache.save(setCode, eventType, cards, lands: true);
-      return cards;
-    } catch (e) {
-      final cached = await cache.load(setCode, eventType, lands: true);
-      if (cached != null) return cached;
-      rethrow;
+    if (!save) {
+      final stored = await cache.load(setCode, eventType, lands: true);
+      if (stored != null && stored.isNotEmpty) return cache.applyLocalImages(setCode, stored);
     }
+    final lands = await _scryfall.fetchBasicLands(setCode);
+    final cards = [
+      for (final (name, img, id) in lands)
+        CardRating(
+          name: name,
+          color: '',
+          rarity: 'basic',
+          imageUrl: img,
+          typeLine: 'Basic Land',
+          arenaId: id,
+        ),
+    ];
+    if (save) await cache.save(setCode, eventType, cards, lands: true);
+    return cache.applyLocalImages(setCode, cards);
   }
 
-  // Downloads a set for offline use, returns how many cards were stored
-  Future<int> downloadSet(String setCode, String eventType) async {
+  // Downloads a set for offline use, including card images
+  // onProgress reports downloaded images out of the total
+  Future<int> downloadSet(String setCode, String eventType, {void Function(int done, int total)? onProgress}) async {
     final cards = await _fetchOnline(setCode, eventType, 'ALL_TIME');
     await cache.save(setCode, eventType, cards);
+    var lands = <CardRating>[];
     try {
-      await fetchBasicLands(setCode, eventType: eventType, save: true);
+      lands = await fetchBasicLands(setCode, eventType: eventType, save: true);
     } catch (_) {
       // Lands are optional, the set itself is what matters
     }
+    await _downloadImages(setCode, [...cards, ...lands], onProgress);
     return cards.length;
+  }
+
+  // Fetches art a few at a time, missing images just stay missing
+  // Art already on disk is kept, only stats are refreshed on an update
+  Future<void> _downloadImages(String setCode, List<CardRating> cards, void Function(int, int)? onProgress) async {
+    final todo = <CardRating>[];
+    for (final c in cards) {
+      if (!c.imageUrl.startsWith('http')) continue;
+      if (File(await cache.imagePath(setCode, c.name)).existsSync()) continue;
+      todo.add(c);
+    }
+    var done = 0;
+    const batch = 6;
+    for (var i = 0; i < todo.length; i += batch) {
+      final slice = todo.skip(i).take(batch);
+      await Future.wait([
+        for (final card in slice)
+          () async {
+            try {
+              final r = await http.get(Uri.parse(card.imageUrl)).timeout(_timeout);
+              if (r.statusCode == 200) await cache.saveImage(setCode, card.name, r.bodyBytes);
+            } catch (_) {
+              // One missing image shouldn't stop the download
+            }
+            done++;
+            onProgress?.call(done, todo.length);
+          }(),
+      ]);
+    }
   }
 
   // Set list for the start screen dropdown, full names come from Scryfall
@@ -102,8 +135,12 @@ class SeventeenLandsService {
     final body = jsonDecode(response.body);
     final codes = (body is List ? body : body['expansions'] as List).cast<String>();
     final names = await _scryfall.fetchSetNames();
-    return [
-      for (final code in codes) SetOption(code, names[code.toUpperCase()] ?? code),
+    final options = [
+      for (final code in codes)
+        SetOption(code, names[code.toUpperCase()]?.$1 ?? code, names[code.toUpperCase()]?.$2 ?? ''),
     ];
+    // Newest first, sets without a known date fall to the bottom
+    options.sort((a, b) => b.released.compareTo(a.released));
+    return options;
   }
 }

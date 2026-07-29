@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:draft_sim/Logic/draft_cubit.dart';
 import 'package:draft_sim/Models/card_rating.dart';
 import 'package:draft_sim/Services/card_cache_service.dart';
@@ -5,45 +7,44 @@ import 'package:draft_sim/Services/seventeen_lands_service.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-
 import 'browse_screen.dart';
 import 'live_draft_screen.dart';
 
 enum RankStat { gihwr, iwd, alsa }
 
-// Network card image that shows a named placeholder if the link is dead
+// Card image from the network, or from a downloaded file when the set is cached
+// Shows a named placeholder if the image can't be loaded
 Widget cardImage(CardRating card, {double? width, BoxFit? fit}) {
-  return Image.network(
-    card.imageUrl,
-    width: width,
-    fit: fit,
-    errorBuilder: (context, error, stack) => SizedBox(
-      width: width,
-      child: AspectRatio(
-        aspectRatio: 0.716,
-        child: Container(
-          padding: const EdgeInsets.all(8),
-          alignment: Alignment.center,
-          color: const Color(0xFF3A2F5C),
-          child: Text(
-            card.name,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 12),
+  Widget fallback(BuildContext context, Object error, StackTrace? stack) => SizedBox(
+        width: width,
+        child: AspectRatio(
+          aspectRatio: 0.716,
+          child: Container(
+            padding: const EdgeInsets.all(8),
+            alignment: Alignment.center,
+            color: const Color(0xFF3A2F5C),
+            child: Text(card.name, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12)),
           ),
         ),
-      ),
-    ),
-  );
+      );
+  if (!card.imageUrl.startsWith('http')) {
+    return Image.file(File(card.imageUrl), width: width, fit: fit, errorBuilder: fallback);
+  }
+  return Image.network(card.imageUrl, width: width, fit: fit, errorBuilder: fallback);
 }
 
 class DraftScreen extends StatelessWidget {
-  const DraftScreen({super.key});
+  // Optional, lets other screens open the draft setup ready for a set
+  final String? setCode;
+  final String? eventType;
+
+  const DraftScreen({super.key, this.setCode, this.eventType});
 
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
       create: (_) => DraftCubit(SeventeenLandsService()),
-      child: const _DraftView(),
+      child: _DraftView(setCode: setCode, eventType: eventType),
     );
   }
 }
@@ -106,10 +107,7 @@ class _HoverZoomState extends State<HoverZoom> {
     }
     // Card images are roughly 1.4 times taller than wide, plus the stats row
     final height = (width * 1.4 + 44).clamp(0.0, screen.height - 16);
-    final top = (event.position.dy - height / 2).clamp(
-      8.0,
-      screen.height - height - 8,
-    );
+    final top = (event.position.dy - height / 2).clamp(8.0, screen.height - height - 8);
     _entry = OverlayEntry(
       builder: (_) => Positioned(
         left: left,
@@ -128,11 +126,7 @@ class _HoverZoomState extends State<HoverZoom> {
                   // Constrained so the preview never runs off short screens
                   ConstrainedBox(
                     constraints: BoxConstraints(maxHeight: height - 44),
-                    child: cardImage(
-                      widget.card,
-                      width: width,
-                      fit: BoxFit.contain,
-                    ),
+                    child: cardImage(widget.card, width: width, fit: BoxFit.contain),
                   ),
                   Padding(
                     padding: const EdgeInsets.all(8),
@@ -167,7 +161,10 @@ class _HoverZoomState extends State<HoverZoom> {
 }
 
 class _DraftView extends StatefulWidget {
-  const _DraftView();
+  final String? setCode;
+  final String? eventType;
+
+  const _DraftView({this.setCode, this.eventType});
 
   @override
   State<_DraftView> createState() => _DraftViewState();
@@ -186,12 +183,39 @@ class _DraftViewState extends State<_DraftView> {
   @override
   void initState() {
     super.initState();
+    // Opened from another screen with a set already chosen
+    if (widget.setCode != null) _setController.text = widget.setCode!;
+    if (widget.eventType != null) _eventType = widget.eventType!;
     _refreshCached();
   }
 
   Future<void> _refreshCached() async {
     final list = await _downloadService.cache.listCached();
     if (mounted) setState(() => _cached = list);
+  }
+
+  // Replaces the stored stats with the latest, keeps the downloaded art
+  Future<void> _updateSet(String setCode, String eventType) async {
+    if (_downloading) return;
+    setState(() {
+      _downloading = true;
+      _downloadStatus = 'Updating $setCode...';
+    });
+    try {
+      final count = await _downloadService.downloadSet(
+        setCode,
+        eventType,
+        onProgress: (done, total) {
+          if (mounted) setState(() => _downloadStatus = 'Downloading images $done/$total');
+        },
+      );
+      if (mounted) setState(() => _downloadStatus = 'Updated $setCode with $count cards');
+    } catch (e) {
+      if (mounted) setState(() => _downloadStatus = 'Update failed: $e');
+    } finally {
+      if (mounted) setState(() => _downloading = false);
+      await _refreshCached();
+    }
   }
 
   Future<void> _downloadSet() async {
@@ -202,13 +226,14 @@ class _DraftViewState extends State<_DraftView> {
       _downloadStatus = 'Downloading $code...';
     });
     try {
-      final count = await _downloadService.downloadSet(code, _eventType);
-      if (mounted) {
-        setState(
-          () =>
-              _downloadStatus = 'Saved $count cards for ${code.toUpperCase()}',
-        );
-      }
+      final count = await _downloadService.downloadSet(
+        code,
+        _eventType,
+        onProgress: (done, total) {
+          if (mounted) setState(() => _downloadStatus = 'Downloading images $done/$total');
+        },
+      );
+      if (mounted) setState(() => _downloadStatus = 'Saved $count cards for ${code.toUpperCase()}');
     } catch (e) {
       if (mounted) setState(() => _downloadStatus = 'Download failed: $e');
     } finally {
@@ -216,7 +241,6 @@ class _DraftViewState extends State<_DraftView> {
       await _refreshCached();
     }
   }
-
   RankStat _rankStat = RankStat.gihwr;
   // Card size in the pack grid, the pick area scales along with it
   double _cardSize = 240;
@@ -254,12 +278,9 @@ class _DraftViewState extends State<_DraftView> {
             onPressed: () {
               final code = _setController.text.trim();
               if (code.isEmpty) return;
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) =>
-                      BrowseScreen(setCode: code, eventType: _eventType),
-                ),
-              );
+              Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => BrowseScreen(setCode: code, eventType: _eventType),
+              ));
             },
           ),
           IconButton(
@@ -306,15 +327,9 @@ class _DraftViewState extends State<_DraftView> {
       ),
       body: BlocBuilder<DraftCubit, DraftState>(
         builder: (context, state) {
-          if (state.loading) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (state.packNumber == 0) {
-            return _buildSetup(context, state.error, state.sets);
-          }
-          if (state.finished) {
-            return _buildFinished(state.playerPool, state.sideboard);
-          }
+          if (state.loading) return const Center(child: CircularProgressIndicator());
+          if (state.packNumber == 0) return _buildSetup(context, state.error, state.sets);
+          if (state.finished) return _buildFinished(state.playerPool, state.sideboard);
           return Column(
             children: [
               Expanded(
@@ -329,24 +344,11 @@ class _DraftViewState extends State<_DraftView> {
                         builder: (context, constraints) => Column(
                           children: [
                             SizedBox(
-                              height: (constraints.maxHeight * _rankSplit - 5)
-                                  .clamp(0.0, constraints.maxHeight - 10),
-                              child: _buildRankTable(
-                                context,
-                                'Pack',
-                                state.currentPack,
-                                pickable: true,
-                              ),
+                              height: (constraints.maxHeight * _rankSplit - 5).clamp(0.0, constraints.maxHeight - 10),
+                              child: _buildRankTable(context, 'Pack', state.currentPack, pickable: true),
                             ),
                             _buildRankSplitter(constraints.maxHeight),
-                            Expanded(
-                              child: _buildRankTable(
-                                context,
-                                'Your picks',
-                                state.playerPool,
-                                pickable: false,
-                              ),
-                            ),
+                            Expanded(child: _buildRankTable(context, 'Your picks', state.playerPool, pickable: false)),
                           ],
                         ),
                       ),
@@ -355,10 +357,7 @@ class _DraftViewState extends State<_DraftView> {
                 ),
               ),
               _buildSplitter(),
-              SizedBox(
-                height: _poolHeight,
-                child: _buildPool(state.playerPool, state.sideboard),
-              ),
+              SizedBox(height: _poolHeight, child: _buildPool(state.playerPool, state.sideboard)),
             ],
           );
         },
@@ -373,10 +372,7 @@ class _DraftViewState extends State<_DraftView> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onVerticalDragUpdate: (d) => setState(() {
-          _rankSplit = (_rankSplit + d.delta.dy / totalHeight).clamp(
-            0.15,
-            0.85,
-          );
+          _rankSplit = (_rankSplit + d.delta.dy / totalHeight).clamp(0.15, 0.85);
         }),
         child: SizedBox(
           height: 10,
@@ -428,10 +424,7 @@ class _DraftViewState extends State<_DraftView> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onVerticalDragUpdate: (d) => setState(() {
-          _poolHeight = (_poolHeight - d.delta.dy).clamp(
-            60.0,
-            MediaQuery.of(context).size.height * 0.75,
-          );
+          _poolHeight = (_poolHeight - d.delta.dy).clamp(60.0, MediaQuery.of(context).size.height * 0.75);
         }),
         child: SizedBox(
           height: 10,
@@ -450,11 +443,7 @@ class _DraftViewState extends State<_DraftView> {
     );
   }
 
-  Widget _buildSetup(
-    BuildContext context,
-    String? error,
-    List<SetOption> sets,
-  ) {
+  Widget _buildSetup(BuildContext context, String? error, List<SetOption> sets) {
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 360),
@@ -466,14 +455,13 @@ class _DraftViewState extends State<_DraftView> {
                 isExpanded: true,
                 hint: const Text('Select a set'),
                 value: _selectedCode,
+                // Reload on open so a newly released set appears without a restart
+                onTap: () => context.read<DraftCubit>().refreshSets(),
                 items: [
                   for (final s in sets)
                     DropdownMenuItem(
                       value: s.code,
-                      child: Text(
-                        '${s.name} (${s.code})',
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      child: Text('${s.name} (${s.code})', overflow: TextOverflow.ellipsis),
                     ),
                 ],
                 // Selecting fills the code field, which stays the source of truth
@@ -488,35 +476,21 @@ class _DraftViewState extends State<_DraftView> {
             TextField(
               controller: _setController,
               textCapitalization: TextCapitalization.characters,
-              decoration: const InputDecoration(
-                labelText: 'Or type a set code (e.g. MSH)',
-              ),
+              decoration: const InputDecoration(labelText: 'Or type a set code (e.g. MSH)'),
             ),
             const SizedBox(height: 12),
             DropdownButton<String>(
               value: _eventType,
               items: const [
-                DropdownMenuItem(
-                  value: 'PremierDraft',
-                  child: Text('Premier Draft'),
-                ),
-                DropdownMenuItem(
-                  value: 'QuickDraft',
-                  child: Text('Quick Draft'),
-                ),
-                DropdownMenuItem(
-                  value: 'TradDraft',
-                  child: Text('Traditional Draft'),
-                ),
+                DropdownMenuItem(value: 'PremierDraft', child: Text('Premier Draft')),
+                DropdownMenuItem(value: 'QuickDraft', child: Text('Quick Draft')),
+                DropdownMenuItem(value: 'TradDraft', child: Text('Traditional Draft')),
               ],
               onChanged: (v) => setState(() => _eventType = v!),
             ),
             const SizedBox(height: 12),
             FilledButton(
-              onPressed: () => context.read<DraftCubit>().startDraft(
-                _setController.text.trim(),
-                eventType: _eventType,
-              ),
+              onPressed: () => context.read<DraftCubit>().startDraft(_setController.text.trim(), eventType: _eventType),
               child: const Text('Start draft'),
             ),
             const SizedBox(height: 8),
@@ -524,20 +498,17 @@ class _DraftViewState extends State<_DraftView> {
               onPressed: () {
                 final code = _setController.text.trim();
                 if (code.isEmpty) return;
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) =>
-                        BrowseScreen(setCode: code, eventType: _eventType),
-                  ),
-                );
+                Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => BrowseScreen(setCode: code, eventType: _eventType),
+                ));
               },
               child: const Text('Browse cards'),
             ),
             const SizedBox(height: 8),
             OutlinedButton(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const LiveDraftScreen()),
-              ),
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const LiveDraftScreen(),
+              )),
               child: const Text('Track Arena draft'),
             ),
             const SizedBox(height: 8),
@@ -549,48 +520,45 @@ class _DraftViewState extends State<_DraftView> {
             if (_downloadStatus != null)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  _downloadStatus!,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
+                child: Text(_downloadStatus!, style: Theme.of(context).textTheme.bodySmall),
               ),
             if (_cached.isNotEmpty) ...[
               const SizedBox(height: 12),
-              Text(
-                'Available offline',
-                style: Theme.of(context).textTheme.labelLarge,
-              ),
+              Text('Available offline', style: Theme.of(context).textTheme.labelLarge),
               for (final c in _cached)
                 ListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
-                  title: Text(
-                    '${c.setCode} · ${c.eventType} · ${c.cardCount} cards',
+                  title: Text('${c.setCode} · ${c.eventType} · ${c.cardCount} cards'),
+                  subtitle: Text('Downloaded ${c.downloaded.toString().split('.').first}'),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        tooltip: 'Update stats to the latest',
+                        icon: const Icon(Icons.refresh, size: 18),
+                        onPressed: _downloading ? null : () => _updateSet(c.setCode, c.eventType),
+                      ),
+                      IconButton(
+                        tooltip: 'Delete download',
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        onPressed: () async {
+                          await _downloadService.cache.delete(c.setCode, c.eventType);
+                          await _refreshCached();
+                        },
+                      ),
+                    ],
                   ),
-                  trailing: IconButton(
-                    tooltip: 'Delete download',
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                    onPressed: () async {
-                      await _downloadService.cache.delete(
-                        c.setCode,
-                        c.eventType,
-                      );
-                      await _refreshCached();
-                    },
-                  ),
-                  onTap: () => setState(() {
-                    _setController.text = c.setCode;
-                    _eventType = c.eventType;
-                  }),
+                  // Tapping a download goes straight to browsing that set
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => BrowseScreen(setCode: c.setCode, eventType: c.eventType),
+                  )),
                 ),
             ],
             if (error != null)
               Padding(
                 padding: const EdgeInsets.only(top: 12),
-                child: Text(
-                  error,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
+                child: Text(error, style: TextStyle(color: Theme.of(context).colorScheme.error)),
               ),
           ],
         ),
@@ -616,8 +584,7 @@ class _DraftViewState extends State<_DraftView> {
           zoomWidth: _zoomSize,
           enabled: _zoomEnabled,
           child: GestureDetector(
-            onSecondaryTap: () =>
-                context.read<DraftCubit>().pickCard(card, toSide: true),
+            onSecondaryTap: () => context.read<DraftCubit>().pickCard(card, toSide: true),
             child: InkWell(
               onTap: () => context.read<DraftCubit>().pickCard(card),
               child: ClipRRect(
@@ -633,12 +600,7 @@ class _DraftViewState extends State<_DraftView> {
 
   // Ranked table like the 17lands Arena overlay
   // Tap a column header to rank by that stat, pickable rows pick the card on tap
-  Widget _buildRankTable(
-    BuildContext context,
-    String title,
-    List<CardRating> cards, {
-    required bool pickable,
-  }) {
+  Widget _buildRankTable(BuildContext context, String title, List<CardRating> cards, {required bool pickable}) {
     final ranked = _ranked(cards);
     return Column(
       children: [
@@ -647,12 +609,7 @@ class _DraftViewState extends State<_DraftView> {
           child: Row(
             children: [
               const SizedBox(width: 22),
-              Expanded(
-                child: Text(
-                  title,
-                  style: Theme.of(context).textTheme.labelLarge,
-                ),
-              ),
+              Expanded(child: Text(title, style: Theme.of(context).textTheme.labelLarge)),
               _headerCell('GIH', RankStat.gihwr),
               _headerCell('IWD', RankStat.iwd),
               _headerCell('ALSA', RankStat.alsa),
@@ -665,8 +622,7 @@ class _DraftViewState extends State<_DraftView> {
               ? const Center(child: Text('No picks yet'))
               : ListView.builder(
                   itemCount: ranked.length,
-                  itemBuilder: (context, i) =>
-                      _rankRow(context, i + 1, ranked[i], pickable: pickable),
+                  itemBuilder: (context, i) => _rankRow(context, i + 1, ranked[i], pickable: pickable),
                 ),
         ),
       ],
@@ -682,29 +638,15 @@ class _DraftViewState extends State<_DraftView> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
-            Text(
-              label,
-              style: TextStyle(
-                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-            Icon(
-              Icons.arrow_drop_down,
-              size: 16,
-              color: selected ? null : Colors.transparent,
-            ),
+            Text(label, style: TextStyle(fontWeight: selected ? FontWeight.bold : FontWeight.normal)),
+            Icon(Icons.arrow_drop_down, size: 16, color: selected ? null : Colors.transparent),
           ],
         ),
       ),
     );
   }
 
-  Widget _rankRow(
-    BuildContext context,
-    int rank,
-    CardRating card, {
-    required bool pickable,
-  }) {
+  Widget _rankRow(BuildContext context, int rank, CardRating card, {required bool pickable}) {
     final stats = Theme.of(context).textTheme.bodySmall;
     return HoverZoom(
       card: card,
@@ -712,46 +654,19 @@ class _DraftViewState extends State<_DraftView> {
       zoomWidth: _zoomSize,
       enabled: _zoomEnabled,
       child: GestureDetector(
-        onSecondaryTap: pickable
-            ? () => context.read<DraftCubit>().pickCard(card, toSide: true)
-            : null,
+        onSecondaryTap: pickable ? () => context.read<DraftCubit>().pickCard(card, toSide: true) : null,
         child: InkWell(
-          onTap: pickable
-              ? () => context.read<DraftCubit>().pickCard(card)
-              : null,
+          onTap: pickable ? () => context.read<DraftCubit>().pickCard(card) : null,
           child: Container(
             decoration: _rowDecoration(card.color),
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
             child: Row(
               children: [
                 SizedBox(width: 22, child: Text('$rank', style: stats)),
-                Expanded(
-                  child: Text(card.name, overflow: TextOverflow.ellipsis),
-                ),
-                SizedBox(
-                  width: 62,
-                  child: Text(
-                    card.gihwrLabel,
-                    style: stats,
-                    textAlign: TextAlign.right,
-                  ),
-                ),
-                SizedBox(
-                  width: 62,
-                  child: Text(
-                    card.iwdLabel,
-                    style: stats,
-                    textAlign: TextAlign.right,
-                  ),
-                ),
-                SizedBox(
-                  width: 62,
-                  child: Text(
-                    card.alsaLabel,
-                    style: stats,
-                    textAlign: TextAlign.right,
-                  ),
-                ),
+                Expanded(child: Text(card.name, overflow: TextOverflow.ellipsis)),
+                SizedBox(width: 62, child: Text(card.gihwrLabel, style: stats, textAlign: TextAlign.right)),
+                SizedBox(width: 62, child: Text(card.iwdLabel, style: stats, textAlign: TextAlign.right)),
+                SizedBox(width: 62, child: Text(card.alsaLabel, style: stats, textAlign: TextAlign.right)),
               ],
             ),
           ),
@@ -763,9 +678,7 @@ class _DraftViewState extends State<_DraftView> {
   // Whole row tinted with the card's colors, gradient for multicolor
   BoxDecoration _rowDecoration(String color) {
     final letters = color.isEmpty ? ['C'] : color.split('');
-    final colors = [
-      for (final l in letters) _manaColor(l).withValues(alpha: 0.35),
-    ];
+    final colors = [for (final l in letters) _manaColor(l).withValues(alpha: 0.35)];
     if (colors.length == 1) return BoxDecoration(color: colors.first);
     return BoxDecoration(gradient: LinearGradient(colors: colors));
   }
@@ -792,10 +705,7 @@ class _DraftViewState extends State<_DraftView> {
             width: 10,
             height: 10,
             margin: const EdgeInsets.only(right: 2),
-            decoration: BoxDecoration(
-              color: _manaColor(l),
-              shape: BoxShape.circle,
-            ),
+            decoration: BoxDecoration(color: _manaColor(l), shape: BoxShape.circle),
           ),
       ],
     );
@@ -807,59 +717,25 @@ class _DraftViewState extends State<_DraftView> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: _curve(
-            pool,
-            onSecondary: cubit.toSideboard,
-            showTargets: true,
-            emptyText: 'No picks yet',
-          ),
-        ),
+        Expanded(child: _curve(pool, onSecondary: cubit.toSideboard, showTargets: true, emptyText: 'No picks yet')),
         Container(width: 2, color: Theme.of(context).dividerColor),
-        Expanded(
-          child: _curve(
-            sideboard,
-            onSecondary: cubit.toPool,
-            showTargets: false,
-            emptyText: 'Sideboard empty',
-          ),
-        ),
+        Expanded(child: _curve(sideboard, onSecondary: cubit.toPool, showTargets: false, emptyText: 'Sideboard empty')),
       ],
     );
   }
 
   // Curve view: lands far left, columns by cost with spells on top and creatures below
   // Right click a card to move it to the other side
-  Widget _curve(
-    List<CardRating> cards, {
-    required void Function(CardRating) onSecondary,
-    required bool showTargets,
-    required String emptyText,
-  }) {
+  Widget _curve(List<CardRating> cards, {required void Function(CardRating) onSecondary, required bool showTargets, required String emptyText}) {
     final w = _cardSize * 0.47;
     final offset = w * 0.15;
     final cardH = w * 1.4;
     if (cards.isEmpty) return Center(child: Text(emptyText));
     final lands = _sortedPool(cards.where((c) => c.isLand).toList());
     final costs = List.generate(8, (i) => i);
-    final spellRows = [
-      for (final c in costs)
-        _sortedPool(
-          cards
-              .where((x) => !x.isLand && !x.isCreature && x.costBucket == c)
-              .toList(),
-        ),
-    ];
-    final creatureRows = [
-      for (final c in costs)
-        _sortedPool(
-          cards
-              .where((x) => !x.isLand && x.isCreature && x.costBucket == c)
-              .toList(),
-        ),
-    ];
-    int maxLen(List<List<CardRating>> rows) =>
-        rows.fold(0, (m, r) => r.length > m ? r.length : m);
+    final spellRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && !x.isCreature && x.costBucket == c).toList())];
+    final creatureRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && x.isCreature && x.costBucket == c).toList())];
+    int maxLen(List<List<CardRating>> rows) => rows.fold(0, (m, r) => r.length > m ? r.length : m);
     final maxTop = maxLen(spellRows);
     final maxBottom = maxLen(creatureRows);
     // Empty rows take no space, so no gap above the cost labels
@@ -870,9 +746,7 @@ class _DraftViewState extends State<_DraftView> {
     final totalSpells = spellRows.fold(0, (s, r) => s + r.length);
     // Average cost of the nonland cards, lands would drag it toward zero
     final nonLands = cards.where((c) => !c.isLand).toList();
-    final avgCost = nonLands.isEmpty
-        ? null
-        : nonLands.fold(0, (s, c) => s + c.cmc) / nonLands.length;
+    final avgCost = nonLands.isEmpty ? null : nonLands.fold(0, (s, c) => s + c.cmc) / nonLands.length;
     final scroll = SingleChildScrollView(
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
@@ -897,25 +771,14 @@ class _DraftViewState extends State<_DraftView> {
                     SizedBox(
                       height: topH,
                       width: w,
-                      child: Align(
-                        alignment: Alignment.bottomCenter,
-                        child: _cardStack(spellRows[c], w, offset, onSecondary),
-                      ),
+                      child: Align(alignment: Alignment.bottomCenter, child: _cardStack(spellRows[c], w, offset, onSecondary)),
                     ),
                   if (topH > 0 && bottomH > 0) const SizedBox(height: 6),
                   if (bottomH > 0)
                     SizedBox(
                       height: bottomH,
                       width: w,
-                      child: Align(
-                        alignment: Alignment.bottomCenter,
-                        child: _cardStack(
-                          creatureRows[c],
-                          w,
-                          offset,
-                          onSecondary,
-                        ),
-                      ),
+                      child: Align(alignment: Alignment.bottomCenter, child: _cardStack(creatureRows[c], w, offset, onSecondary)),
                     ),
                   _columnLabel(
                     c == 7 ? '7+' : '$c',
@@ -959,10 +822,7 @@ class _DraftViewState extends State<_DraftView> {
     final met = count >= target;
     return Text(
       '$label $count/$target',
-      style: TextStyle(
-        fontSize: 12,
-        color: met ? const Color(0xFF4CAF6D) : null,
-      ),
+      style: TextStyle(fontSize: 12, color: met ? const Color(0xFF4CAF6D) : null),
     );
   }
 
@@ -990,22 +850,14 @@ class _DraftViewState extends State<_DraftView> {
         Text(label),
         Text(
           '$count/$target',
-          style: TextStyle(
-            fontSize: 11,
-            color: met ? const Color(0xFF4CAF6D) : null,
-          ),
+          style: TextStyle(fontSize: 11, color: met ? const Color(0xFF4CAF6D) : null),
         ),
       ],
     );
   }
 
   // Cards stacked with their title bars visible, right click moves the card
-  Widget _cardStack(
-    List<CardRating> cards,
-    double w,
-    double offset,
-    void Function(CardRating) onSecondary,
-  ) {
+  Widget _cardStack(List<CardRating> cards, double w, double offset, void Function(CardRating) onSecondary) {
     if (cards.isEmpty) return SizedBox(width: w);
     final h = w * 1.4 + (cards.length - 1) * offset;
     return SizedBox(
@@ -1042,10 +894,7 @@ class _DraftViewState extends State<_DraftView> {
         if (sideboard.isNotEmpty)
           Padding(
             padding: const EdgeInsets.all(8),
-            child: Text(
-              'Sideboard',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
+            child: Text('Sideboard', style: Theme.of(context).textTheme.titleMedium),
           ),
         for (final card in _sortedPool(sideboard)) _finishedTile(card),
       ],
@@ -1066,9 +915,7 @@ class _DraftViewState extends State<_DraftView> {
             Flexible(child: Text(card.name, overflow: TextOverflow.ellipsis)),
           ],
         ),
-        subtitle: Text(
-          'GIH ${card.gihwrLabel} · IWD ${card.iwdLabel} · ALSA ${card.alsaLabel}',
-        ),
+        subtitle: Text('GIH ${card.gihwrLabel} · IWD ${card.iwdLabel} · ALSA ${card.alsaLabel}'),
       ),
     );
   }
@@ -1076,13 +923,11 @@ class _DraftViewState extends State<_DraftView> {
   List<CardRating> _ranked(List<CardRating> cards) {
     final sorted = List<CardRating>.from(cards);
     // Missing stats (low sample size) always sort to the bottom
-    sorted.sort(
-      (a, b) => switch (_rankStat) {
-        RankStat.gihwr => (b.gihwr ?? -1).compareTo(a.gihwr ?? -1),
-        RankStat.iwd => (b.iwd ?? -9).compareTo(a.iwd ?? -9),
-        RankStat.alsa => (a.alsa ?? 99).compareTo(b.alsa ?? 99),
-      },
-    );
+    sorted.sort((a, b) => switch (_rankStat) {
+      RankStat.gihwr => (b.gihwr ?? -1).compareTo(a.gihwr ?? -1),
+      RankStat.iwd => (b.iwd ?? -9).compareTo(a.iwd ?? -9),
+      RankStat.alsa => (a.alsa ?? 99).compareTo(b.alsa ?? 99),
+    });
     return sorted;
   }
 

@@ -1,16 +1,26 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 
 class ScryfallService {
   // Scryfall rejects requests without a proper user agent
-  static const _headers = {'User-Agent': 'DraftSim/1.0', 'Accept': 'application/json'};
+  static const _headers = {
+    'User-Agent': 'DraftSim/1.0',
+    'Accept': 'application/json',
+  };
 
   // Returns card name -> (mana value, type line, oracle text, image url, arena id) for a whole set
   // Some sets add cards from bonus sheets, so those are fetched alongside the main set
-  Future<Map<String, (int, String, String, String, int?)>> fetchSetInfo(String setCode) async {
+  Future<Map<String, (int, String, String, String, int?)>> fetchSetInfo(
+    String setCode,
+  ) async {
     final map = <String, (int, String, String, String, int?)>{};
     // Main set last so it wins any name collision with a bonus sheet reprint
-    for (final q in [...['spg', ..._bonusSheets(setCode)].map((s) => 'set:$s game:arena'), 'set:$setCode', 'set:$setCode game:arena']) {
+    for (final q in [
+      ...['spg', ..._bonusSheets(setCode)].map((s) => 'set:$s game:arena'),
+      'set:$setCode',
+      'set:$setCode game:arena',
+    ]) {
       await _addSet(map, q);
     }
     return map;
@@ -34,7 +44,8 @@ class ScryfallService {
   // Every basic art has its own arena id, so all printings are needed
   Future<List<(String, String, int)>> fetchBasicLands(String setCode) async {
     final result = <(String, String, int)>[];
-    var url = 'https://api.scryfall.com/cards/search'
+    var url =
+        'https://api.scryfall.com/cards/search'
         '?q=${Uri.encodeQueryComponent('set:$setCode type:basic game:arena')}&unique=prints';
     while (true) {
       final response = await http.get(Uri.parse(url), headers: _headers);
@@ -43,7 +54,11 @@ class ScryfallService {
       for (final card in (body['data'] as List? ?? [])) {
         final id = (card['arena_id'] as num?)?.toInt();
         if (id == null) continue;
-        result.add((card['name'] as String, (card['image_uris']?['normal'] ?? '') as String, id));
+        result.add((
+          card['name'] as String,
+          (card['image_uris']?['normal'] ?? '') as String,
+          id,
+        ));
       }
       if (body['has_more'] == true && body['next_page'] != null) {
         url = body['next_page'];
@@ -54,8 +69,12 @@ class ScryfallService {
     return result;
   }
 
-  Future<void> _addSet(Map<String, (int, String, String, String, int?)> map, String query) async {
-    var url = 'https://api.scryfall.com/cards/search?q=${Uri.encodeQueryComponent(query)}&unique=cards';
+  Future<void> _addSet(
+    Map<String, (int, String, String, String, int?)> map,
+    String query,
+  ) async {
+    var url =
+        'https://api.scryfall.com/cards/search?q=${Uri.encodeQueryComponent(query)}&unique=cards';
     while (true) {
       final response = await http.get(Uri.parse(url), headers: _headers);
       if (response.statusCode != 200) break;
@@ -68,7 +87,9 @@ class ScryfallService {
         var img = (card['image_uris']?['normal'] ?? '') as String;
         final faces = card['card_faces'] as List? ?? [];
         if (oracle.isEmpty) {
-          oracle = [for (final f in faces) (f['oracle_text'] ?? '') as String].join('\n');
+          oracle = [
+            for (final f in faces) (f['oracle_text'] ?? '') as String,
+          ].join('\n');
         }
         if (img.isEmpty && faces.isNotEmpty) {
           img = (faces.first['image_uris']?['normal'] ?? '') as String;
@@ -90,16 +111,19 @@ class ScryfallService {
     }
   }
 
-  // Returns set code (uppercase) -> full set name
-  Future<Map<String, String>> fetchSetNames() async {
-    final map = <String, String>{};
+  // Returns set code (uppercase) -> (full name, release date)
+  Future<Map<String, (String, String)>> fetchSetNames() async {
+    final map = <String, (String, String)>{};
     var url = 'https://api.scryfall.com/sets';
     while (true) {
       final response = await http.get(Uri.parse(url), headers: _headers);
       if (response.statusCode != 200) break;
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       for (final s in (body['data'] as List? ?? [])) {
-        map[(s['code'] as String).toUpperCase()] = s['name'] as String;
+        map[(s['code'] as String).toUpperCase()] = (
+          s['name'] as String,
+          (s['released_at'] ?? '') as String,
+        );
       }
       if (body['has_more'] == true && body['next_page'] != null) {
         url = body['next_page'];

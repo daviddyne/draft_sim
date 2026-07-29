@@ -61,6 +61,8 @@ class DraftCubit extends Cubit<DraftState> {
   final SeventeenLandsService _service;
   final Random _random = Random();
   PackGenerator? _generator;
+  // When the set list was last fetched, so opening the dropdown doesn't refetch it
+  DateTime? _setsLoadedAt;
 
   DraftCubit(this._service) : super(const DraftState()) {
     _loadSets();
@@ -69,9 +71,18 @@ class DraftCubit extends Cubit<DraftState> {
   Future<void> _loadSets() async {
     try {
       emit(state.copyWith(sets: await _service.fetchSets()));
+      _setsLoadedAt = DateTime.now();
     } catch (_) {
       // Dropdown stays empty, typing a code still works
     }
+  }
+
+  // Called when the set dropdown is opened, so new releases show up
+  // Skipped while the list is fresh, the set list costs several requests
+  Future<void> refreshSets() async {
+    final last = _setsLoadedAt;
+    if (last != null && DateTime.now().difference(last) < const Duration(minutes: 30)) return;
+    await _loadSets();
   }
 
   // Abandon the current draft and go back to set selection
