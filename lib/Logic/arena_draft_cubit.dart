@@ -72,6 +72,8 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
   bool _deckApplied = false;
   // Every card picked this draft, used to derive the sideboard from the maindeck
   final List<CardRating> _fullPool = [];
+  // Pool as of the last report, so new picks can be told apart from old ones
+  List<int> _lastPoolIds = [];
   DeckEvent? _pendingDeck;
   bool _loadingSet = false;
   // Sets that failed to load, so a bad match can't be retried forever
@@ -144,12 +146,22 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
     _fullPool
       ..clear()
       ..addAll(cards);
-    if (_deckApplied) return;
-    // Quick draft reports the pool instead of single picks, so clear picked cards from the pack
-    final pack = [
-      for (final c in state.pack)
-        if (!cards.contains(c)) c,
-    ];
+    if (_deckApplied) {
+      _lastPoolIds = [for (final c in cards) c.arenaId ?? 0];
+      return;
+    }
+    // Take out only what was added since the last report, so duplicates in the
+    // pack survive and the final pick still clears the pack
+    final added = List<int>.from([for (final c in cards) c.arenaId ?? 0]);
+    for (final id in _lastPoolIds) {
+      added.remove(id);
+    }
+    _lastPoolIds = [for (final c in cards) c.arenaId ?? 0];
+    final pack = List<CardRating>.from(state.pack);
+    for (final id in added) {
+      final i = pack.indexWhere((c) => c.arenaId == id);
+      if (i >= 0) pack.removeAt(i);
+    }
     emit(state.copyWith(pool: cards, pack: pack));
   }
 
@@ -212,6 +224,7 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
     _loadingSet = true;
     _deckApplied = false;
     _fullPool.clear();
+    _lastPoolIds = [];
     try {
       List<CardRating> cards;
       try {
@@ -226,7 +239,10 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
       };
       // Basic lands fill the pack land slot, they have no ratings of their own
       try {
-        for (final land in await _service.fetchBasicLands(e.setCode)) {
+        for (final land in await _service.fetchBasicLands(
+          e.setCode,
+          eventType: eventType,
+        )) {
           _byArenaId[land.arenaId!] = land;
         }
       } catch (_) {
@@ -291,6 +307,7 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
   void clearDraft() {
     _deckApplied = false;
     _fullPool.clear();
+    _lastPoolIds = [];
     emit(
       state.copyWith(
         pack: [],

@@ -39,6 +39,39 @@ class CardRating {
     );
   }
 
+  // Cache format, keeps the fields merged in from Scryfall as well
+  factory CardRating.fromCache(Map<String, dynamic> json) {
+    return CardRating(
+      name: json['name'] ?? '',
+      color: json['color'] ?? '',
+      rarity: json['rarity'] ?? '',
+      imageUrl: json['image'] ?? '',
+      gihwr: (json['gihwr'] as num?)?.toDouble(),
+      iwd: (json['iwd'] as num?)?.toDouble(),
+      alsa: (json['alsa'] as num?)?.toDouble(),
+      cmc: (json['cmc'] as num?)?.toInt() ?? 0,
+      typeLine: json['type'] ?? '',
+      oracleText: json['oracle'] ?? '',
+      arenaId: (json['arenaId'] as num?)?.toInt(),
+    );
+  }
+
+  Map<String, dynamic> toCache() {
+    return {
+      'name': name,
+      'color': color,
+      'rarity': rarity,
+      'image': imageUrl,
+      'gihwr': gihwr,
+      'iwd': iwd,
+      'alsa': alsa,
+      'cmc': cmc,
+      'type': typeLine,
+      'oracle': oracleText,
+      'arenaId': arenaId,
+    };
+  }
+
   CardRating withInfo(int cmc, String typeLine, String oracleText, String freshImageUrl, int? arenaId) {
     return CardRating(
       name: name,

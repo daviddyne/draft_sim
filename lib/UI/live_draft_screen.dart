@@ -435,6 +435,9 @@ class _LiveViewState extends State<_LiveView> {
     final bottomH = maxBottom == 0 ? 0.0 : cardH + (maxBottom - 1) * offset;
     final totalCreatures = creatureRows.fold(0, (s, r) => s + r.length);
     final totalSpells = spellRows.fold(0, (s, r) => s + r.length);
+    // Average cost of the nonland cards, lands would drag it toward zero
+    final nonLands = cards.where((c) => !c.isLand).toList();
+    final avgCost = nonLands.isEmpty ? null : nonLands.fold(0, (s, c) => s + c.cmc) / nonLands.length;
     final scroll = LayoutBuilder(
       builder: (context, constraints) => SingleChildScrollView(
         child: SingleChildScrollView(
@@ -491,6 +494,11 @@ class _LiveViewState extends State<_LiveView> {
               _totalLabel('Creatures', totalCreatures, 16),
               const SizedBox(width: 12),
               _totalLabel('Noncreatures', totalSpells, 7),
+              const SizedBox(width: 12),
+              Text(
+                'Avg cost ${avgCost == null ? '-' : avgCost.toStringAsFixed(2)}',
+                style: const TextStyle(fontSize: 12),
+              ),
             ],
           ),
         ),
