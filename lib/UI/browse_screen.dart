@@ -68,7 +68,7 @@ class _BrowseViewState extends State<_BrowseView> {
   // Cards clicked away so they don't drag the averages
   final Set<String> _excluded = {};
   RankStat _rankStat = RankStat.gihwr;
-  // Filters below the search row can be collapsed for more card space
+  // All filter rows can be collapsed to leave more room for cards
   bool _showFilters = true;
   // Deck being built from the browsed cards
   final List<CardRating> _deck = [];
@@ -169,71 +169,76 @@ class _BrowseViewState extends State<_BrowseView> {
           final availableColors = _availableColors(state.cards);
           return Column(
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _searchController,
-                        decoration: const InputDecoration(
-                          labelText:
-                              'Keyword (name, type or rules text, e.g. goblin)',
-                          isDense: true,
-                          border: OutlineInputBorder(),
+              if (_showFilters)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _searchController,
+                          decoration: const InputDecoration(
+                            labelText:
+                                'Keyword (name, type or rules text, e.g. goblin)',
+                            isDense: true,
+                            border: OutlineInputBorder(),
+                          ),
+                          onChanged: (_) =>
+                              setState(() => _syncColors(state.cards)),
                         ),
-                        onChanged: (_) =>
-                            setState(() => _syncColors(state.cards)),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    for (final c in ['W', 'U', 'B', 'R', 'G', 'C'])
+                      const SizedBox(width: 12),
+                      for (final c in ['W', 'U', 'B', 'R', 'G', 'C'])
+                        Padding(
+                          padding: const EdgeInsets.only(right: 4),
+                          child: Opacity(
+                            opacity: availableColors.contains(c) ? 1 : 0.35,
+                            child: FilterChip(
+                              label: Text(c),
+                              selected: _colors.contains(c),
+                              selectedColor: _manaColor(
+                                c,
+                              ).withValues(alpha: 0.5),
+                              onSelected: (on) => setState(() {
+                                // Plain click selects only this color, ctrl click adds or removes
+                                final ctrl =
+                                    HardwareKeyboard.instance.isControlPressed;
+                                if (ctrl) {
+                                  on ? _colors.add(c) : _colors.remove(c);
+                                  if (on) _multicolor = true;
+                                } else {
+                                  final wasOnlyThis =
+                                      _colors.length == 1 &&
+                                      _colors.contains(c);
+                                  _colors.clear();
+                                  if (!wasOnlyThis) {
+                                    _colors.add(c);
+                                    _multicolor = true;
+                                  }
+                                }
+                                if (_colors.isEmpty) _multicolor = false;
+                              }),
+                            ),
+                          ),
+                        ),
                       Padding(
                         padding: const EdgeInsets.only(right: 4),
                         child: Opacity(
-                          opacity: availableColors.contains(c) ? 1 : 0.35,
+                          opacity: availableColors.contains('Multi') ? 1 : 0.35,
                           child: FilterChip(
-                            label: Text(c),
-                            selected: _colors.contains(c),
-                            selectedColor: _manaColor(c).withValues(alpha: 0.5),
-                            onSelected: (on) => setState(() {
-                              // Plain click selects only this color, ctrl click adds or removes
-                              final ctrl =
-                                  HardwareKeyboard.instance.isControlPressed;
-                              if (ctrl) {
-                                on ? _colors.add(c) : _colors.remove(c);
-                                if (on) _multicolor = true;
-                              } else {
-                                final wasOnlyThis =
-                                    _colors.length == 1 && _colors.contains(c);
-                                _colors.clear();
-                                if (!wasOnlyThis) {
-                                  _colors.add(c);
-                                  _multicolor = true;
-                                }
-                              }
-                              if (_colors.isEmpty) _multicolor = false;
-                            }),
+                            label: const Text('Multi'),
+                            selected: _multicolor,
+                            selectedColor: const Color(
+                              0xFFD4AF37,
+                            ).withValues(alpha: 0.5),
+                            onSelected: (on) =>
+                                setState(() => _multicolor = on),
                           ),
                         ),
                       ),
-                    Padding(
-                      padding: const EdgeInsets.only(right: 4),
-                      child: Opacity(
-                        opacity: availableColors.contains('Multi') ? 1 : 0.35,
-                        child: FilterChip(
-                          label: const Text('Multi'),
-                          selected: _multicolor,
-                          selectedColor: const Color(
-                            0xFFD4AF37,
-                          ).withValues(alpha: 0.5),
-                          onSelected: (on) => setState(() => _multicolor = on),
-                        ),
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
               if (_showFilters)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),

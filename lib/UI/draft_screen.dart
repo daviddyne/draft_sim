@@ -3,7 +3,6 @@ import 'package:draft_sim/Models/card_rating.dart';
 import 'package:draft_sim/Services/card_cache_service.dart';
 import 'package:draft_sim/Services/seventeen_lands_service.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -93,7 +92,7 @@ class _HoverZoomState extends State<HoverZoom> {
     super.dispose();
   }
 
-  void _show(PointerEnterEvent event) {
+  void _show(Offset pointer) {
     if (!widget.enabled) return;
     _hide();
     final screen = MediaQuery.of(context).size;
@@ -120,7 +119,7 @@ class _HoverZoomState extends State<HoverZoom> {
     }
     // Card images are roughly 1.4 times taller than wide, plus the stats row
     final height = (width * 1.4 + 44).clamp(0.0, screen.height - 16);
-    final top = (event.position.dy - height / 2).clamp(
+    final top = (pointer.dy - height / 2).clamp(
       8.0,
       screen.height - height - 8,
     );
@@ -173,9 +172,15 @@ class _HoverZoomState extends State<HoverZoom> {
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-      onEnter: _show,
+      onEnter: (e) => _show(e.position),
       onExit: (_) => _hide(),
-      child: widget.child,
+      // Touch has no hover, so holding a card shows the preview instead
+      child: GestureDetector(
+        onLongPressStart: (d) => _show(d.globalPosition),
+        onLongPressEnd: (_) => _hide(),
+        onLongPressCancel: _hide,
+        child: widget.child,
+      ),
     );
   }
 }
@@ -712,6 +717,10 @@ class _DraftViewState extends State<_DraftView> {
           child: GestureDetector(
             onSecondaryTap: () =>
                 context.read<DraftCubit>().pickCard(card, toSide: true),
+            // Two fingers stand in for a right click on touch
+            onScaleStart: (d) => d.pointerCount >= 2
+                ? context.read<DraftCubit>().pickCard(card, toSide: true)
+                : null,
             child: InkWell(
               onTap: () => context.read<DraftCubit>().pickCard(card),
               child: ClipRRect(
@@ -808,6 +817,11 @@ class _DraftViewState extends State<_DraftView> {
       child: GestureDetector(
         onSecondaryTap: pickable
             ? () => context.read<DraftCubit>().pickCard(card, toSide: true)
+            : null,
+        onScaleStart: pickable
+            ? (d) => d.pointerCount >= 2
+                  ? context.read<DraftCubit>().pickCard(card, toSide: true)
+                  : null
             : null,
         child: InkWell(
           onTap: pickable
@@ -922,17 +936,15 @@ class _DraftViewState extends State<_DraftView> {
     );
   }
 
-  // Curve view: lands far left, columns by cost with spells on top and creatures below
-  // Right click a card to move it to the other side
+  // Curve view: lands far left, columns by cost with spells on top, creatures below
+  // Cards scale to fit so every column from lands to 7+ stays visible
+  // Right click or long press a card to move it to the other side
   Widget _curve(
     List<CardRating> cards, {
     required void Function(CardRating) onSecondary,
     required bool showTargets,
     required String emptyText,
   }) {
-    final w = _cardSize * 0.47;
-    final offset = w * 0.15;
-    final cardH = w * 1.4;
     if (cards.isEmpty) return Center(child: Text(emptyText));
     final lands = _sortedPool(cards.where((c) => c.isLand).toList());
     final costs = List.generate(8, (i) => i);
@@ -955,112 +967,132 @@ class _DraftViewState extends State<_DraftView> {
     int maxLen(List<List<CardRating>> rows) =>
         rows.fold(0, (m, r) => r.length > m ? r.length : m);
     final maxTop = maxLen(spellRows);
-    final maxBottom = maxLen(creatureRows);
-    // Empty rows take no space, so no gap above the cost labels
-    final topH = maxTop == 0 ? 0.0 : cardH + (maxTop - 1) * offset;
-    final bottomH = maxBottom == 0 ? 0.0 : cardH + (maxBottom - 1) * offset;
-    // Deck totals against a typical 16 creature / 7 noncreature split
+    final maxBottom = maxLen(
+      [
+        creatureRows,
+        [lands],
+      ].expand((e) => e).toList(),
+    );
     final totalCreatures = creatureRows.fold(0, (s, r) => s + r.length);
     final totalSpells = spellRows.fold(0, (s, r) => s + r.length);
-    // Average cost of the nonland cards, lands would drag it toward zero
     final nonLands = cards.where((c) => !c.isLand).toList();
     final avgCost = nonLands.isEmpty
         ? null
         : nonLands.fold(0, (s, c) => s + c.cmc) / nonLands.length;
-    final scroll = SingleChildScrollView(
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        // No left padding so the piles start at the screen edge
-        padding: const EdgeInsets.fromLTRB(0, 8, 8, 8),
-        child: Row(
+    return LayoutBuilder(
+      builder: (context, box) {
+        final w = _fitCardWidth(box, maxTop, maxBottom, showTargets);
+        final offset = w * 0.15;
+        final cardH = w * 1.4;
+        final topH = maxTop == 0 ? 0.0 : cardH + (maxTop - 1) * offset;
+        final bottomH = maxBottom == 0 ? 0.0 : cardH + (maxBottom - 1) * offset;
+        final grid = Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _cardStack(lands, w, offset, onSecondary),
-                _columnLabel('Lands', lands.length, showTargets ? 17 : null),
-              ],
-            ),
-            const SizedBox(width: 12),
-            for (final c in costs) ...[
-              Column(
+            Expanded(
+              child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (topH > 0)
-                    SizedBox(
-                      height: topH,
-                      width: w,
-                      child: Align(
-                        alignment: Alignment.bottomCenter,
-                        child: _cardStack(spellRows[c], w, offset, onSecondary),
-                      ),
+                  if (topH > 0) SizedBox(height: topH),
+                  if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
+                  SizedBox(
+                    height: bottomH,
+                    child: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: _cardStack(lands, w, offset, onSecondary),
                     ),
-                  if (topH > 0 && bottomH > 0) const SizedBox(height: 6),
-                  if (bottomH > 0)
-                    SizedBox(
-                      height: bottomH,
-                      width: w,
-                      child: Align(
-                        alignment: Alignment.bottomCenter,
-                        child: _cardStack(
-                          creatureRows[c],
-                          w,
-                          offset,
-                          onSecondary,
+                  ),
+                  _columnLabel('Lands', lands.length, showTargets ? 17 : null),
+                ],
+              ),
+            ),
+            for (final c in costs)
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (topH > 0)
+                      SizedBox(
+                        height: topH,
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: _cardStack(
+                            spellRows[c],
+                            w,
+                            offset,
+                            onSecondary,
+                          ),
                         ),
                       ),
+                    if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
+                    if (bottomH > 0)
+                      SizedBox(
+                        height: bottomH,
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: _cardStack(
+                            creatureRows[c],
+                            w,
+                            offset,
+                            onSecondary,
+                          ),
+                        ),
+                      ),
+                    _columnLabel(
+                      c == 7 ? '7+' : '$c',
+                      spellRows[c].length + creatureRows[c].length,
+                      showTargets ? _curveTarget(c) : null,
                     ),
-                  _columnLabel(
-                    c == 7 ? '7+' : '$c',
-                    spellRows[c].length + creatureRows[c].length,
-                    showTargets ? _curveTarget(c) : null,
+                  ],
+                ),
+              ),
+          ],
+        );
+        if (!showTargets) return SingleChildScrollView(child: grid);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
+              child: Row(
+                children: [
+                  _totalLabel('Creatures', totalCreatures, 16),
+                  const SizedBox(width: 12),
+                  _totalLabel('Noncreatures', totalSpells, 7),
+                  const SizedBox(width: 12),
+                  Text(
+                    'Avg cost ${avgCost == null ? '-' : avgCost.toStringAsFixed(2)}',
+                    style: const TextStyle(fontSize: 12),
                   ),
                 ],
               ),
-              const SizedBox(width: 8),
-            ],
+            ),
+            Expanded(child: SingleChildScrollView(child: grid)),
           ],
-        ),
-      ),
-    );
-    if (!showTargets) return scroll;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(4, 4, 8, 0),
-          child: Row(
-            children: [
-              _totalLabel('Creatures', totalCreatures, 16),
-              const SizedBox(width: 12),
-              _totalLabel('Noncreatures', totalSpells, 7),
-              const SizedBox(width: 12),
-              Text(
-                'Avg cost ${avgCost == null ? '-' : avgCost.toStringAsFixed(2)}',
-                style: const TextStyle(fontSize: 12),
-              ),
-            ],
-          ),
-        ),
-        Expanded(child: scroll),
-      ],
+        );
+      },
     );
   }
 
-  // Deck total with recommended amount, green when met
-  Widget _totalLabel(String label, int count, int target) {
-    final met = count >= target;
-    return Text(
-      '$label $count/$target',
-      style: TextStyle(
-        fontSize: 12,
-        color: met ? const Color(0xFF4CAF6D) : null,
-      ),
-    );
+  // Largest card width that keeps all nine columns and both rows in view
+  double _fitCardWidth(
+    BoxConstraints box,
+    int maxTop,
+    int maxBottom,
+    bool showTargets,
+  ) {
+    const columns = 9;
+    final byWidth = (box.maxWidth - 8) / columns;
+    final labels = showTargets ? 54.0 : 30.0;
+    final rows =
+        (maxTop == 0 ? 0.0 : 1.4 + 0.15 * (maxTop - 1)) +
+        (maxBottom == 0 ? 0.0 : 1.4 + 0.15 * (maxBottom - 1));
+    final byHeight = rows <= 0 ? byWidth : (box.maxHeight - labels) / rows;
+    final fit = byWidth < byHeight ? byWidth : byHeight;
+    final preferred = _cardSize * 0.47;
+    return (fit < preferred ? fit : preferred).clamp(24.0, 400.0);
   }
 
-  // Rough guideline for a 40 card deck with 17 lands and 23 spells
   int? _curveTarget(int cost) {
     return switch (cost) {
       0 => null,
@@ -1093,6 +1125,18 @@ class _DraftViewState extends State<_DraftView> {
     );
   }
 
+  // Deck total with recommended amount, green when met
+  Widget _totalLabel(String label, int count, int target) {
+    final met = count >= target;
+    return Text(
+      '$label $count/$target',
+      style: TextStyle(
+        fontSize: 12,
+        color: met ? const Color(0xFF4CAF6D) : null,
+      ),
+    );
+  }
+
   // Cards stacked with their title bars visible, right click moves the card
   Widget _cardStack(
     List<CardRating> cards,
@@ -1116,6 +1160,9 @@ class _DraftViewState extends State<_DraftView> {
                 enabled: _zoomEnabled,
                 child: GestureDetector(
                   onSecondaryTap: () => onSecondary(cards[i]),
+                  // Two fingers stand in for a right click on touch
+                  onScaleStart: (d) =>
+                      d.pointerCount >= 2 ? onSecondary(cards[i]) : null,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(6),
                     child: cardImage(cards[i], width: w),

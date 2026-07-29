@@ -417,12 +417,10 @@ class _LiveViewState extends State<_LiveView> {
     );
   }
 
-  // Curve view: lands far left, columns by cost with spells on top and creatures below
+  // Curve view: lands far left, columns by cost with spells on top, creatures below
+  // Cards scale to fit so every column from lands to 7+ stays visible
   // Read only, the split mirrors the deck built in Arena
   Widget _curve(List<CardRating> cards, {required bool showTargets, required String emptyText}) {
-    final w = _cardSize * 0.47;
-    final offset = w * 0.15;
-    final cardH = w * 1.4;
     if (cards.isEmpty) return Center(child: Text(emptyText));
     final lands = _sortedPool(cards.where((c) => c.isLand).toList());
     final costs = List.generate(8, (i) => i);
@@ -430,81 +428,91 @@ class _LiveViewState extends State<_LiveView> {
     final creatureRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && x.isCreature && x.costBucket == c).toList())];
     int maxLen(List<List<CardRating>> rows) => rows.fold(0, (m, r) => r.length > m ? r.length : m);
     final maxTop = maxLen(spellRows);
-    final maxBottom = maxLen(creatureRows);
-    final topH = maxTop == 0 ? 0.0 : cardH + (maxTop - 1) * offset;
-    final bottomH = maxBottom == 0 ? 0.0 : cardH + (maxBottom - 1) * offset;
+    final maxBottom = maxLen([creatureRows, [lands]].expand((e) => e).toList());
     final totalCreatures = creatureRows.fold(0, (s, r) => s + r.length);
     final totalSpells = spellRows.fold(0, (s, r) => s + r.length);
-    // Average cost of the nonland cards, lands would drag it toward zero
     final nonLands = cards.where((c) => !c.isLand).toList();
     final avgCost = nonLands.isEmpty ? null : nonLands.fold(0, (s, c) => s + c.cmc) / nonLands.length;
-    final scroll = LayoutBuilder(
-      builder: (context, constraints) => SingleChildScrollView(
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.fromLTRB(0, 8, 0, 8),
-          child: ConstrainedBox(
-            // Spread the columns across the full width instead of leaving a gap
-            constraints: BoxConstraints(minWidth: constraints.maxWidth),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                Column(
+    return LayoutBuilder(
+      builder: (context, box) {
+        final w = _fitCardWidth(box, maxTop, maxBottom, showTargets);
+        final offset = w * 0.15;
+        final cardH = w * 1.4;
+        final topH = maxTop == 0 ? 0.0 : cardH + (maxTop - 1) * offset;
+        final bottomH = maxBottom == 0 ? 0.0 : cardH + (maxBottom - 1) * offset;
+        final grid = Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (topH > 0) SizedBox(height: topH),
+                  if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
+                  SizedBox(
+                    height: bottomH,
+                    child: Align(alignment: Alignment.bottomCenter, child: _cardStack(lands, w, offset)),
+                  ),
+                  _columnLabel('Lands', lands.length, showTargets ? 17 : null),
+                ],
+              ),
+            ),
+            for (final c in costs)
+              Expanded(
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _cardStack(lands, w, offset),
-                    _columnLabel('Lands', lands.length, showTargets ? 17 : null),
+                    if (topH > 0)
+                      SizedBox(
+                        height: topH,
+                        child: Align(alignment: Alignment.bottomCenter, child: _cardStack(spellRows[c], w, offset)),
+                      ),
+                    if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
+                    if (bottomH > 0)
+                      SizedBox(
+                        height: bottomH,
+                        child: Align(alignment: Alignment.bottomCenter, child: _cardStack(creatureRows[c], w, offset)),
+                      ),
+                    _columnLabel(c == 7 ? '7+' : '$c', spellRows[c].length + creatureRows[c].length, showTargets ? _curveTarget(c) : null),
                   ],
                 ),
-                for (final c in costs)
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (topH > 0)
-                        SizedBox(
-                          height: topH,
-                          width: w,
-                          child: Align(alignment: Alignment.bottomCenter, child: _cardStack(spellRows[c], w, offset)),
-                        ),
-                      if (topH > 0 && bottomH > 0) const SizedBox(height: 6),
-                      if (bottomH > 0)
-                        SizedBox(
-                          height: bottomH,
-                          width: w,
-                          child: Align(alignment: Alignment.bottomCenter, child: _cardStack(creatureRows[c], w, offset)),
-                        ),
-                      _columnLabel(c == 7 ? '7+' : '$c', spellRows[c].length + creatureRows[c].length, showTargets ? _curveTarget(c) : null),
-                    ],
-                  ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-    if (!showTargets) return scroll;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(4, 4, 8, 0),
-          child: Row(
-            children: [
-              _totalLabel('Creatures', totalCreatures, 16),
-              const SizedBox(width: 12),
-              _totalLabel('Noncreatures', totalSpells, 7),
-              const SizedBox(width: 12),
-              Text(
-                'Avg cost ${avgCost == null ? '-' : avgCost.toStringAsFixed(2)}',
-                style: const TextStyle(fontSize: 12),
               ),
-            ],
-          ),
-        ),
-        Expanded(child: scroll),
-      ],
+          ],
+        );
+        if (!showTargets) return SingleChildScrollView(child: grid);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
+              child: Row(
+                children: [
+                  _totalLabel('Creatures', totalCreatures, 16),
+                  const SizedBox(width: 12),
+                  _totalLabel('Noncreatures', totalSpells, 7),
+                  const SizedBox(width: 12),
+                  Text('Avg cost ${avgCost == null ? '-' : avgCost.toStringAsFixed(2)}', style: const TextStyle(fontSize: 12)),
+                ],
+              ),
+            ),
+            Expanded(child: SingleChildScrollView(child: grid)),
+          ],
+        );
+      },
     );
+  }
+
+  // Largest card width that keeps all nine columns and both rows in view
+  double _fitCardWidth(BoxConstraints box, int maxTop, int maxBottom, bool showTargets) {
+    const columns = 9;
+    final byWidth = (box.maxWidth - 8) / columns;
+    final labels = showTargets ? 54.0 : 30.0;
+    final rows = (maxTop == 0 ? 0.0 : 1.4 + 0.15 * (maxTop - 1)) +
+        (maxBottom == 0 ? 0.0 : 1.4 + 0.15 * (maxBottom - 1));
+    final byHeight = rows <= 0 ? byWidth : (box.maxHeight - labels) / rows;
+    final fit = byWidth < byHeight ? byWidth : byHeight;
+    final preferred = _cardSize * 0.47;
+    return (fit < preferred ? fit : preferred).clamp(24.0, 400.0);
   }
 
   // Cards stacked with their title bars visible
