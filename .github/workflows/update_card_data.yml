@@ -1,0 +1,66 @@
+name: Update card data
+
+# Keeps web/data filled so the hosted app reads everything from its own origin,
+# which avoids the missing CORS header on 17lands.
+# Sets are fetched once and kept, only ACTIVE ones are refreshed, since finished
+# sets no longer change and re-downloading them would bloat the repo history.
+on:
+  schedule:
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+    inputs:
+      refresh_all:
+        description: 'Re-download every set, not just the active ones'
+        type: boolean
+        default: false
+
+# Needed because the job commits the fetched data back to the repo
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      # Sets still being drafted, refreshed on every run
+      ACTIVE: 'OTJ DFT'
+      EVENTS: 'PremierDraft QuickDraft TradDraft'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch data
+        run: |
+          mkdir -p web/data
+          curl -sS --fail "https://www.17lands.com/data/expansions" -o web/data/expansions.json
+          # The endpoint returns a plain json array of set codes
+          codes=$(python3 -c "import json;print(' '.join(json.load(open('web/data/expansions.json'))))")
+          for code in $codes; do
+            for event in $EVENTS; do
+              file="web/data/${code}_${event}.json"
+              refresh=false
+              case " $ACTIVE " in *" $code "*) refresh=true ;; esac
+              if [ "${{ inputs.refresh_all }}" = "true" ]; then refresh=true; fi
+              if [ -f "$file" ] && [ "$refresh" = "false" ]; then continue; fi
+              url="https://www.17lands.com/api/card_data?expansion=$code&event_type=$event&time_period=ALL_TIME"
+              if curl -sS --fail "$url" -o "$file.tmp"; then
+                # Sets without data for an event return an empty list, skip those
+                if python3 -c "import json,sys;d=json.load(open('$file.tmp'));sys.exit(0 if (d.get('data') if isinstance(d,dict) else d) else 1)"; then
+                  mv "$file.tmp" "$file"
+                  echo "saved $code $event"
+                else
+                  rm -f "$file.tmp"
+                fi
+              else
+                rm -f "$file.tmp"
+              fi
+              sleep 1
+            done
+          done
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add web/data
+          git diff --staged --quiet || git commit -m "Update card data"
+          git push
