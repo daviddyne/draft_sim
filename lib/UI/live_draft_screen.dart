@@ -4,6 +4,7 @@ import 'package:draft_sim/Services/arena_log_service.dart';
 import 'package:draft_sim/Services/seventeen_lands_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+
 import 'browse_screen.dart';
 import 'draft_screen.dart';
 
@@ -13,7 +14,8 @@ class LiveDraftScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
-      create: (_) => ArenaDraftCubit(SeventeenLandsService(), ArenaLogService())..start(),
+      create: (_) =>
+          ArenaDraftCubit(SeventeenLandsService(), ArenaLogService())..start(),
       child: const _LiveView(),
     );
   }
@@ -56,7 +58,9 @@ class _LiveViewState extends State<_LiveView> {
           builder: (context, state) => Row(
             children: [
               Text(
-                state.setCode.isEmpty ? 'Arena · detecting set...' : 'Arena · ${state.setCode} ${state.eventType}',
+                state.setCode.isEmpty
+                    ? 'Arena · detecting set...'
+                    : 'Arena · ${state.setCode} ${state.eventType}',
               ),
               const SizedBox(width: 16),
               if (state.connected) _buildColorFilter(),
@@ -65,7 +69,9 @@ class _LiveViewState extends State<_LiveView> {
                   padding: const EdgeInsets.only(left: 12),
                   child: Text(
                     '${state.unknownIds} unmatched (${state.unknownInfo})',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFFD9534F)),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFFD9534F),
+                    ),
                   ),
                 ),
               if (state.error != null)
@@ -73,7 +79,9 @@ class _LiveViewState extends State<_LiveView> {
                   padding: const EdgeInsets.only(left: 12),
                   child: Text(
                     state.error!,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: const Color(0xFFD9534F)),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFFD9534F),
+                    ),
                   ),
                 ),
             ],
@@ -86,9 +94,12 @@ class _LiveViewState extends State<_LiveView> {
             onPressed: () {
               final s = context.read<ArenaDraftCubit>().state;
               if (s.setCode.isEmpty) return;
-              Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => BrowseScreen(setCode: s.setCode, eventType: s.eventType),
-              ));
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) =>
+                      BrowseScreen(setCode: s.setCode, eventType: s.eventType),
+                ),
+              );
             },
           ),
           IconButton(
@@ -154,13 +165,16 @@ class _LiveViewState extends State<_LiveView> {
                       controller: _pathController,
                       decoration: const InputDecoration(
                         labelText: 'Path to Player.log',
-                        hintText: '~/Games/Heroic/Prefixes/default/MTGArena/pfx/drive_c/users/.../Player.log',
+                        hintText:
+                            '~/Games/Heroic/Prefixes/default/MTGArena/pfx/drive_c/users/.../Player.log',
                         border: OutlineInputBorder(),
                       ),
                     ),
                     const SizedBox(height: 12),
                     FilledButton(
-                      onPressed: () => context.read<ArenaDraftCubit>().start(logPath: _pathController.text.trim()),
+                      onPressed: () => context.read<ArenaDraftCubit>().start(
+                        logPath: _pathController.text.trim(),
+                      ),
                       child: const Text('Connect'),
                     ),
                   ],
@@ -185,19 +199,27 @@ class _LiveViewState extends State<_LiveView> {
   void _showDiagnostics(BuildContext context) {
     final cubit = context.read<ArenaDraftCubit>();
     final s = cubit.state;
-    final summary = 'pool ${cubit.poolCount} · maindeck ${s.pool.length} · sideboard ${s.sideboard.length} · '
+    final summary =
+        'pool ${cubit.poolCount} · maindeck ${s.pool.length} · sideboard ${s.sideboard.length} · '
         'deck detected ${cubit.deckApplied}\nlog: ${s.logPath}\n\nRecent lines mentioning a deck:\n';
-    final body = cubit.deckLines.isEmpty ? '${summary}none' : summary + cubit.deckLines.join('\n\n');
+    final body = cubit.deckLines.isEmpty
+        ? '${summary}none'
+        : summary + cubit.deckLines.join('\n\n');
     showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Deck detection'),
         content: SizedBox(
           width: 900,
-          child: SingleChildScrollView(child: SelectableText(body, style: const TextStyle(fontSize: 11))),
+          child: SingleChildScrollView(
+            child: SelectableText(body, style: const TextStyle(fontSize: 11)),
+          ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close')),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
         ],
       ),
     );
@@ -211,29 +233,36 @@ class _LiveViewState extends State<_LiveView> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final h = constraints.maxHeight;
-        final packH = hasPack ? (h * _rankSplit - 5).clamp(0.0, h - 10) : 0.0;
-        final rest = hasPack ? h - packH - 10 : h;
+        final packH = hasPack ? (h * _rankSplit - 11).clamp(0.0, h - 22) : 0.0;
+        final rest = hasPack ? h - packH - 22 : h;
         return Column(
           children: [
             if (hasPack) ...[
-              SizedBox(height: packH, child: _buildRankTable(context, 'Pack', state.pack)),
+              SizedBox(
+                height: packH,
+                child: _buildRankTable(context, 'Pack', state.pack),
+              ),
               _buildRankSplitter(h),
             ],
             if (!hasSide)
               Expanded(
                 child: _buildRankTable(
                   context,
-                  state.setCode.isEmpty ? 'Waiting for a draft in Arena' : 'Your picks',
+                  state.setCode.isEmpty
+                      ? 'Waiting for a draft in Arena'
+                      : 'Your picks',
                   state.pool,
                 ),
               )
             else ...[
               SizedBox(
-                height: (rest * _sideSplit - 5).clamp(0.0, rest - 10),
+                height: (rest * _sideSplit - 11).clamp(0.0, rest - 22),
                 child: _buildRankTable(context, 'Your picks', state.pool),
               ),
               _buildSideSplitter(rest),
-              Expanded(child: _buildRankTable(context, 'Sideboard', state.sideboard)),
+              Expanded(
+                child: _buildRankTable(context, 'Sideboard', state.sideboard),
+              ),
             ],
           ],
         );
@@ -251,12 +280,16 @@ class _LiveViewState extends State<_LiveView> {
           _sideSplit = (_sideSplit + d.delta.dy / totalHeight).clamp(0.2, 0.85);
         }),
         child: SizedBox(
-          height: 10,
+          // Tall grab area, the visible bar stays thin
+          height: 22,
           child: Center(
             child: Container(
-              width: 60,
+              width: 80,
               height: 4,
-              decoration: BoxDecoration(color: Theme.of(context).dividerColor, borderRadius: BorderRadius.circular(2)),
+              decoration: BoxDecoration(
+                color: Theme.of(context).dividerColor,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
           ),
         ),
@@ -264,7 +297,11 @@ class _LiveViewState extends State<_LiveView> {
     );
   }
 
-  Widget _buildRankTable(BuildContext context, String title, List<CardRating> cards) {
+  Widget _buildRankTable(
+    BuildContext context,
+    String title,
+    List<CardRating> cards,
+  ) {
     final ranked = _ranked(cards);
     return Column(
       children: [
@@ -273,7 +310,12 @@ class _LiveViewState extends State<_LiveView> {
           child: Row(
             children: [
               const SizedBox(width: 22),
-              Expanded(child: Text(title, style: Theme.of(context).textTheme.labelLarge)),
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+              ),
               _headerCell('GIH', RankStat.gihwr),
               _headerCell('IWD', RankStat.iwd),
               _headerCell('ALSA', RankStat.alsa),
@@ -286,7 +328,8 @@ class _LiveViewState extends State<_LiveView> {
               ? const Center(child: Text('Nothing yet'))
               : ListView.builder(
                   itemCount: ranked.length,
-                  itemBuilder: (context, i) => _rankRow(context, i + 1, ranked[i]),
+                  itemBuilder: (context, i) =>
+                      _rankRow(context, i + 1, ranked[i]),
                 ),
         ),
       ],
@@ -302,8 +345,17 @@ class _LiveViewState extends State<_LiveView> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
-            Text(label, style: TextStyle(fontWeight: selected ? FontWeight.bold : FontWeight.normal)),
-            Icon(Icons.arrow_drop_down, size: 16, color: selected ? null : Colors.transparent),
+            Text(
+              label,
+              style: TextStyle(
+                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+            Icon(
+              Icons.arrow_drop_down,
+              size: 16,
+              color: selected ? null : Colors.transparent,
+            ),
           ],
         ),
       ),
@@ -324,9 +376,30 @@ class _LiveViewState extends State<_LiveView> {
           children: [
             SizedBox(width: 22, child: Text('$rank', style: stats)),
             Expanded(child: Text(card.name, overflow: TextOverflow.ellipsis)),
-            SizedBox(width: 62, child: Text(card.gihwrLabel, style: stats, textAlign: TextAlign.right)),
-            SizedBox(width: 62, child: Text(card.iwdLabel, style: stats, textAlign: TextAlign.right)),
-            SizedBox(width: 62, child: Text(card.alsaLabel, style: stats, textAlign: TextAlign.right)),
+            SizedBox(
+              width: 62,
+              child: Text(
+                card.gihwrLabel,
+                style: stats,
+                textAlign: TextAlign.right,
+              ),
+            ),
+            SizedBox(
+              width: 62,
+              child: Text(
+                card.iwdLabel,
+                style: stats,
+                textAlign: TextAlign.right,
+              ),
+            ),
+            SizedBox(
+              width: 62,
+              child: Text(
+                card.alsaLabel,
+                style: stats,
+                textAlign: TextAlign.right,
+              ),
+            ),
           ],
         ),
       ),
@@ -343,21 +416,29 @@ class _LiveViewState extends State<_LiveView> {
           Padding(
             padding: const EdgeInsets.only(right: 4),
             child: InkWell(
-              onTap: () => setState(() => _colorFilter.contains(c) ? _colorFilter.remove(c) : _colorFilter.add(c)),
+              onTap: () => setState(
+                () => _colorFilter.contains(c)
+                    ? _colorFilter.remove(c)
+                    : _colorFilter.add(c),
+              ),
               child: Container(
                 width: 26,
                 height: 26,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: _colorFilter.contains(c) ? _manaColor(c) : _manaColor(c).withValues(alpha: 0.25),
+                  color: _colorFilter.contains(c)
+                      ? _manaColor(c)
+                      : _manaColor(c).withValues(alpha: 0.25),
                 ),
                 child: Text(
                   c,
                   style: TextStyle(
                     fontSize: 12,
                     color: _colorFilter.contains(c) ? Colors.black : null,
-                    fontWeight: _colorFilter.contains(c) ? FontWeight.bold : FontWeight.normal,
+                    fontWeight: _colorFilter.contains(c)
+                        ? FontWeight.bold
+                        : FontWeight.normal,
                   ),
                 ),
               ),
@@ -371,7 +452,8 @@ class _LiveViewState extends State<_LiveView> {
     if (_colorFilter.isEmpty) return cards;
     return [
       for (final c in cards)
-        if (c.color.isEmpty || c.color.split('').every(_colorFilter.contains)) c,
+        if (c.color.isEmpty || c.color.split('').every(_colorFilter.contains))
+          c,
     ];
   }
 
@@ -382,12 +464,23 @@ class _LiveViewState extends State<_LiveView> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(
-            width: (constraints.maxWidth * _doneSplit - 5).clamp(0.0, constraints.maxWidth - 10),
-            child: _curve(_colorFiltered(pool), showTargets: true, emptyText: 'No picks tracked yet'),
+            width: (constraints.maxWidth * _doneSplit - 11).clamp(
+              0.0,
+              constraints.maxWidth - 22,
+            ),
+            child: _curve(
+              _colorFiltered(pool),
+              showTargets: true,
+              emptyText: 'No picks tracked yet',
+            ),
           ),
           _buildDoneSplitter(constraints.maxWidth),
           Expanded(
-            child: _curve(_colorFiltered(sideboard), showTargets: false, emptyText: 'Sideboard follows your Arena deck'),
+            child: _curve(
+              _colorFiltered(sideboard),
+              showTargets: false,
+              emptyText: 'Sideboard follows your Arena deck',
+            ),
           ),
         ],
       ),
@@ -404,12 +497,16 @@ class _LiveViewState extends State<_LiveView> {
           _doneSplit = (_doneSplit + d.delta.dx / totalWidth).clamp(0.2, 0.85);
         }),
         child: SizedBox(
-          width: 10,
+          // Wide grab area, the visible bar stays thin
+          width: 22,
           child: Center(
             child: Container(
               width: 4,
-              height: 60,
-              decoration: BoxDecoration(color: Theme.of(context).dividerColor, borderRadius: BorderRadius.circular(2)),
+              height: 80,
+              decoration: BoxDecoration(
+                color: Theme.of(context).dividerColor,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
           ),
         ),
@@ -420,19 +517,45 @@ class _LiveViewState extends State<_LiveView> {
   // Curve view: lands far left, columns by cost with spells on top, creatures below
   // Cards scale to fit so every column from lands to 7+ stays visible
   // Read only, the split mirrors the deck built in Arena
-  Widget _curve(List<CardRating> cards, {required bool showTargets, required String emptyText}) {
+  Widget _curve(
+    List<CardRating> cards, {
+    required bool showTargets,
+    required String emptyText,
+  }) {
     if (cards.isEmpty) return Center(child: Text(emptyText));
     final lands = _sortedPool(cards.where((c) => c.isLand).toList());
     final costs = List.generate(8, (i) => i);
-    final spellRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && !x.isCreature && x.costBucket == c).toList())];
-    final creatureRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && x.isCreature && x.costBucket == c).toList())];
-    int maxLen(List<List<CardRating>> rows) => rows.fold(0, (m, r) => r.length > m ? r.length : m);
+    final spellRows = [
+      for (final c in costs)
+        _sortedPool(
+          cards
+              .where((x) => !x.isLand && !x.isCreature && x.costBucket == c)
+              .toList(),
+        ),
+    ];
+    final creatureRows = [
+      for (final c in costs)
+        _sortedPool(
+          cards
+              .where((x) => !x.isLand && x.isCreature && x.costBucket == c)
+              .toList(),
+        ),
+    ];
+    int maxLen(List<List<CardRating>> rows) =>
+        rows.fold(0, (m, r) => r.length > m ? r.length : m);
     final maxTop = maxLen(spellRows);
-    final maxBottom = maxLen([creatureRows, [lands]].expand((e) => e).toList());
+    final maxBottom = maxLen(
+      [
+        creatureRows,
+        [lands],
+      ].expand((e) => e).toList(),
+    );
     final totalCreatures = creatureRows.fold(0, (s, r) => s + r.length);
     final totalSpells = spellRows.fold(0, (s, r) => s + r.length);
     final nonLands = cards.where((c) => !c.isLand).toList();
-    final avgCost = nonLands.isEmpty ? null : nonLands.fold(0, (s, c) => s + c.cmc) / nonLands.length;
+    final avgCost = nonLands.isEmpty
+        ? null
+        : nonLands.fold(0, (s, c) => s + c.cmc) / nonLands.length;
     return LayoutBuilder(
       builder: (context, box) {
         final w = _fitCardWidth(box, maxTop, maxBottom, showTargets);
@@ -451,7 +574,10 @@ class _LiveViewState extends State<_LiveView> {
                   if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
                   SizedBox(
                     height: bottomH,
-                    child: Align(alignment: Alignment.bottomCenter, child: _cardStack(lands, w, offset)),
+                    child: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: _cardStack(lands, w, offset),
+                    ),
                   ),
                   _columnLabel('Lands', lands.length, showTargets ? 17 : null),
                 ],
@@ -465,15 +591,25 @@ class _LiveViewState extends State<_LiveView> {
                     if (topH > 0)
                       SizedBox(
                         height: topH,
-                        child: Align(alignment: Alignment.bottomCenter, child: _cardStack(spellRows[c], w, offset)),
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: _cardStack(spellRows[c], w, offset),
+                        ),
                       ),
                     if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
                     if (bottomH > 0)
                       SizedBox(
                         height: bottomH,
-                        child: Align(alignment: Alignment.bottomCenter, child: _cardStack(creatureRows[c], w, offset)),
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: _cardStack(creatureRows[c], w, offset),
+                        ),
                       ),
-                    _columnLabel(c == 7 ? '7+' : '$c', spellRows[c].length + creatureRows[c].length, showTargets ? _curveTarget(c) : null),
+                    _columnLabel(
+                      c == 7 ? '7+' : '$c',
+                      spellRows[c].length + creatureRows[c].length,
+                      showTargets ? _curveTarget(c) : null,
+                    ),
                   ],
                 ),
               ),
@@ -491,7 +627,10 @@ class _LiveViewState extends State<_LiveView> {
                   const SizedBox(width: 12),
                   _totalLabel('Noncreatures', totalSpells, 7),
                   const SizedBox(width: 12),
-                  Text('Avg cost ${avgCost == null ? '-' : avgCost.toStringAsFixed(2)}', style: const TextStyle(fontSize: 12)),
+                  Text(
+                    'Avg cost ${avgCost == null ? '-' : avgCost.toStringAsFixed(2)}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
                 ],
               ),
             ),
@@ -503,11 +642,17 @@ class _LiveViewState extends State<_LiveView> {
   }
 
   // Largest card width that keeps all nine columns and both rows in view
-  double _fitCardWidth(BoxConstraints box, int maxTop, int maxBottom, bool showTargets) {
+  double _fitCardWidth(
+    BoxConstraints box,
+    int maxTop,
+    int maxBottom,
+    bool showTargets,
+  ) {
     const columns = 9;
     final byWidth = (box.maxWidth - 8) / columns;
     final labels = showTargets ? 54.0 : 30.0;
-    final rows = (maxTop == 0 ? 0.0 : 1.4 + 0.15 * (maxTop - 1)) +
+    final rows =
+        (maxTop == 0 ? 0.0 : 1.4 + 0.15 * (maxTop - 1)) +
         (maxBottom == 0 ? 0.0 : 1.4 + 0.15 * (maxBottom - 1));
     final byHeight = rows <= 0 ? byWidth : (box.maxHeight - labels) / rows;
     final fit = byWidth < byHeight ? byWidth : byHeight;
@@ -533,7 +678,7 @@ class _LiveViewState extends State<_LiveView> {
                 enabled: _zoomEnabled,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(6),
-                  child: cardImage(cards[i], width: w),
+                  child: cardImage(cards[i], width: w, decodeWidth: w),
                 ),
               ),
             ),
@@ -562,7 +707,13 @@ class _LiveViewState extends State<_LiveView> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(label),
-        Text('$count/$target', style: TextStyle(fontSize: 11, color: met ? const Color(0xFF4CAF6D) : null)),
+        Text(
+          '$count/$target',
+          style: TextStyle(
+            fontSize: 11,
+            color: met ? const Color(0xFF4CAF6D) : null,
+          ),
+        ),
       ],
     );
   }
@@ -571,7 +722,10 @@ class _LiveViewState extends State<_LiveView> {
     final met = count >= target;
     return Text(
       '$label $count/$target',
-      style: TextStyle(fontSize: 12, color: met ? const Color(0xFF4CAF6D) : null),
+      style: TextStyle(
+        fontSize: 12,
+        color: met ? const Color(0xFF4CAF6D) : null,
+      ),
     );
   }
 
@@ -584,12 +738,16 @@ class _LiveViewState extends State<_LiveView> {
           _rankWidth = (_rankWidth - d.delta.dx).clamp(260.0, 700.0);
         }),
         child: SizedBox(
-          width: 10,
+          // Wide grab area, the visible bar stays thin
+          width: 22,
           child: Center(
             child: Container(
               width: 4,
-              height: 60,
-              decoration: BoxDecoration(color: Theme.of(context).dividerColor, borderRadius: BorderRadius.circular(2)),
+              height: 80,
+              decoration: BoxDecoration(
+                color: Theme.of(context).dividerColor,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
           ),
         ),
@@ -604,15 +762,22 @@ class _LiveViewState extends State<_LiveView> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onVerticalDragUpdate: (d) => setState(() {
-          _rankSplit = (_rankSplit + d.delta.dy / totalHeight).clamp(0.15, 0.85);
+          _rankSplit = (_rankSplit + d.delta.dy / totalHeight).clamp(
+            0.15,
+            0.85,
+          );
         }),
         child: SizedBox(
-          height: 10,
+          // Tall grab area, the visible bar stays thin
+          height: 22,
           child: Center(
             child: Container(
-              width: 60,
+              width: 80,
               height: 4,
-              decoration: BoxDecoration(color: Theme.of(context).dividerColor, borderRadius: BorderRadius.circular(2)),
+              decoration: BoxDecoration(
+                color: Theme.of(context).dividerColor,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
           ),
         ),
@@ -622,11 +787,13 @@ class _LiveViewState extends State<_LiveView> {
 
   List<CardRating> _ranked(List<CardRating> cards) {
     final sorted = List<CardRating>.from(cards);
-    sorted.sort((a, b) => switch (_rankStat) {
-      RankStat.gihwr => (b.gihwr ?? -1).compareTo(a.gihwr ?? -1),
-      RankStat.iwd => (b.iwd ?? -9).compareTo(a.iwd ?? -9),
-      RankStat.alsa => (a.alsa ?? 99).compareTo(b.alsa ?? 99),
-    });
+    sorted.sort(
+      (a, b) => switch (_rankStat) {
+        RankStat.gihwr => (b.gihwr ?? -1).compareTo(a.gihwr ?? -1),
+        RankStat.iwd => (b.iwd ?? -9).compareTo(a.iwd ?? -9),
+        RankStat.alsa => (a.alsa ?? 99).compareTo(b.alsa ?? 99),
+      },
+    );
     return sorted;
   }
 
@@ -641,7 +808,9 @@ class _LiveViewState extends State<_LiveView> {
 
   BoxDecoration _rowDecoration(String color) {
     final letters = color.isEmpty ? ['C'] : color.split('');
-    final colors = [for (final l in letters) _manaColor(l).withValues(alpha: 0.35)];
+    final colors = [
+      for (final l in letters) _manaColor(l).withValues(alpha: 0.35),
+    ];
     if (colors.length == 1) return BoxDecoration(color: colors.first);
     return BoxDecoration(gradient: LinearGradient(colors: colors));
   }
