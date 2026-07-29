@@ -68,6 +68,13 @@ class _BrowseViewState extends State<_BrowseView> {
   // Cards clicked away so they don't drag the averages
   final Set<String> _excluded = {};
   RankStat _rankStat = RankStat.gihwr;
+  // Deck being built from the browsed cards
+  final List<CardRating> _deck = [];
+  final List<CardRating> _side = [];
+  double _bottomHeight = 320;
+  double _deckSplit = 0.6;
+  // Width split between the deck and the sideboard below
+  double _sideSplit = 0.7;
   // Same view controls as draft mode
   double _cardSize = 240;
   double _zoomSize = 350;
@@ -222,54 +229,45 @@ class _BrowseViewState extends State<_BrowseView> {
               ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-                child: Row(
+                child: Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text('Type', style: Theme.of(context).textTheme.labelLarge),
-                    const SizedBox(width: 8),
                     for (final t in allTypes)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 4),
-                        child: Opacity(
-                          opacity: availableTypes.contains(t) ? 1 : 0.35,
-                          child: FilterChip(
-                            label: Text(t),
-                            selected: _types.contains(t),
-                            onSelected: (on) => setState(() {
-                              on ? _types.add(t) : _types.remove(t);
-                              _syncColors(state.cards);
-                            }),
-                          ),
+                      Opacity(
+                        opacity: availableTypes.contains(t) ? 1 : 0.35,
+                        child: FilterChip(
+                          label: Text(t),
+                          visualDensity: VisualDensity.compact,
+                          selected: _types.contains(t),
+                          onSelected: (on) => setState(() {
+                            on ? _types.add(t) : _types.remove(t);
+                            _syncColors(state.cards);
+                          }),
                         ),
                       ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-                child: Row(
-                  children: [
+                    const SizedBox(width: 12),
                     Text(
                       'Rarity',
                       style: Theme.of(context).textTheme.labelLarge,
                     ),
-                    const SizedBox(width: 8),
                     for (final (r, label, color) in allRarities)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 4),
-                        child: Opacity(
-                          opacity: availableRarities.contains(r) ? 1 : 0.35,
-                          child: FilterChip(
-                            label: Text(label),
-                            selected: _rarities.contains(r),
-                            selectedColor: color.withValues(alpha: 0.5),
-                            onSelected: (on) => setState(() {
-                              on ? _rarities.add(r) : _rarities.remove(r);
-                              _syncColors(state.cards);
-                            }),
-                          ),
+                      Opacity(
+                        opacity: availableRarities.contains(r) ? 1 : 0.35,
+                        child: FilterChip(
+                          label: Text(label),
+                          visualDensity: VisualDensity.compact,
+                          selected: _rarities.contains(r),
+                          selectedColor: color.withValues(alpha: 0.5),
+                          onSelected: (on) => setState(() {
+                            on ? _rarities.add(r) : _rarities.remove(r);
+                            _syncColors(state.cards);
+                          }),
                         ),
                       ),
-                    const SizedBox(width: 16),
+                    const SizedBox(width: 12),
                     Text(
                       _minGih == 0
                           ? 'Min GIH: off'
@@ -277,7 +275,7 @@ class _BrowseViewState extends State<_BrowseView> {
                       style: Theme.of(context).textTheme.labelLarge,
                     ),
                     SizedBox(
-                      width: 200,
+                      width: 180,
                       child: Slider(
                         value: _minGih,
                         min: 0,
@@ -301,25 +299,47 @@ class _BrowseViewState extends State<_BrowseView> {
                     _buildVSplitter(),
                     SizedBox(
                       width: _rankWidth,
-                      child: Column(
-                        children: [
-                          _buildHeader(context),
-                          const Divider(height: 1),
-                          Expanded(
-                            child: filtered.isEmpty
-                                ? const Center(child: Text('No cards match'))
-                                : ListView.builder(
-                                    itemCount: filtered.length,
-                                    itemBuilder: (context, i) =>
-                                        _row(context, i + 1, filtered[i]),
-                                  ),
-                          ),
-                        ],
-                      ),
+                      child: _buildRankPanel(filtered),
                     ),
                   ],
                 ),
               ),
+              if (_deck.isNotEmpty || _side.isNotEmpty) ...[
+                _buildHSplitter(),
+                SizedBox(
+                  height: _bottomHeight,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) => Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(
+                          width: (constraints.maxWidth * _sideSplit - 5).clamp(
+                            0.0,
+                            constraints.maxWidth - 10,
+                          ),
+                          child: _curve(
+                            _deck,
+                            showTargets: true,
+                            emptyText: 'Click cards to add them',
+                            onTap: _fromDeck,
+                            onSecondary: _deckToSide,
+                          ),
+                        ),
+                        _buildSideSplitter(constraints.maxWidth),
+                        Expanded(
+                          child: _curve(
+                            _side,
+                            showTargets: false,
+                            emptyText: 'Sideboard empty',
+                            onTap: _fromSide,
+                            onSecondary: _sideToDeck,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ],
           );
         },
@@ -327,7 +347,7 @@ class _BrowseViewState extends State<_BrowseView> {
     );
   }
 
-  // Card image grid like the draft mode pack area, click toggles exclusion
+  // Card image grid like the draft mode pack area, clicking adds to the deck
   Widget _buildGrid(List<CardRating> cards) {
     if (cards.isEmpty) return const Center(child: Text('No cards match'));
     return GridView.builder(
@@ -347,11 +367,9 @@ class _BrowseViewState extends State<_BrowseView> {
           zoomWidth: _zoomSize,
           enabled: _zoomEnabled,
           child: GestureDetector(
-            onTap: () => setState(
-              () => excluded
-                  ? _excluded.remove(card.name)
-                  : _excluded.add(card.name),
-            ),
+            // Left click builds the deck, right click puts the card in the sideboard
+            onTap: () => setState(() => _deck.add(card)),
+            onSecondaryTap: () => setState(() => _side.add(card)),
             child: Opacity(
               opacity: excluded ? 0.35 : 1,
               child: ClipRRect(
@@ -410,7 +428,7 @@ class _BrowseViewState extends State<_BrowseView> {
     final excludedCount = cards.length - included.length;
     final suffix = excludedCount > 0
         ? ' ($excludedCount excluded)'
-        : ' · click a card to exclude it';
+        : ' · click a table row to exclude it';
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Text(
@@ -576,6 +594,394 @@ class _BrowseViewState extends State<_BrowseView> {
       }
     }
     return present;
+  }
+
+  // Deck moves, cards can appear more than once so only one copy is removed
+  void _fromDeck(CardRating c) => setState(() => _deck.remove(c));
+
+  void _fromSide(CardRating c) => setState(() => _side.remove(c));
+
+  void _deckToSide(CardRating c) => setState(() {
+    _deck.remove(c);
+    _side.add(c);
+  });
+
+  void _sideToDeck(CardRating c) => setState(() {
+    _side.remove(c);
+    _deck.add(c);
+  });
+
+  // Ranked filtered cards, plus deck and sideboard tables once they have cards
+  Widget _buildRankPanel(List<CardRating> filtered) {
+    final hasSide = _side.isNotEmpty;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final h = constraints.maxHeight;
+        final topH = hasSide ? (h * _deckSplit - 5).clamp(0.0, h - 10) : h;
+        return Column(
+          children: [
+            SizedBox(
+              height: topH,
+              child: Column(
+                children: [
+                  _buildHeader(context),
+                  const Divider(height: 1),
+                  Expanded(
+                    child: filtered.isEmpty
+                        ? const Center(child: Text('No cards match'))
+                        : ListView.builder(
+                            itemCount: filtered.length,
+                            itemBuilder: (context, i) =>
+                                _row(context, i + 1, filtered[i]),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+            if (hasSide) ...[
+              _buildDeckSplitter(h),
+              Expanded(
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Sideboard',
+                              style: Theme.of(context).textTheme.labelLarge,
+                            ),
+                          ),
+                          Text(
+                            '${_side.length}',
+                            style: Theme.of(context).textTheme.labelLarge,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: _ranked(_side).length,
+                        itemBuilder: (context, i) =>
+                            _row(context, i + 1, _ranked(_side)[i]),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  // Drag to resize the deck area
+  Widget _buildHSplitter() {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeRow,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onVerticalDragUpdate: (d) => setState(() {
+          _bottomHeight = (_bottomHeight - d.delta.dy).clamp(
+            80.0,
+            MediaQuery.of(context).size.height * 0.7,
+          );
+        }),
+        child: SizedBox(
+          height: 10,
+          child: Center(
+            child: Container(
+              width: 60,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Theme.of(context).dividerColor,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Drag to split the deck and sideboard widths
+  Widget _buildSideSplitter(double totalWidth) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragUpdate: (d) => setState(() {
+          _sideSplit = (_sideSplit + d.delta.dx / totalWidth).clamp(0.2, 0.9);
+        }),
+        child: SizedBox(
+          width: 10,
+          child: Center(
+            child: Container(
+              width: 4,
+              height: 60,
+              decoration: BoxDecoration(
+                color: Theme.of(context).dividerColor,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Drag to split the ranks between filtered cards and the sideboard
+  Widget _buildDeckSplitter(double totalHeight) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeRow,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onVerticalDragUpdate: (d) => setState(() {
+          _deckSplit = (_deckSplit + d.delta.dy / totalHeight).clamp(0.2, 0.85);
+        }),
+        child: SizedBox(
+          height: 10,
+          child: Center(
+            child: Container(
+              width: 60,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Theme.of(context).dividerColor,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Curve view: lands far left, columns by cost with spells on top, creatures below
+  // Left click removes a card, right click moves it to the other side
+  Widget _curve(
+    List<CardRating> cards, {
+    required bool showTargets,
+    required String emptyText,
+    required void Function(CardRating) onTap,
+    required void Function(CardRating) onSecondary,
+  }) {
+    final w = _cardSize * 0.47;
+    final offset = w * 0.15;
+    final cardH = w * 1.4;
+    if (cards.isEmpty) return Center(child: Text(emptyText));
+    final lands = _sortedPool(cards.where((c) => c.isLand).toList());
+    final costs = List.generate(8, (i) => i);
+    final spellRows = [
+      for (final c in costs)
+        _sortedPool(
+          cards
+              .where((x) => !x.isLand && !x.isCreature && x.costBucket == c)
+              .toList(),
+        ),
+    ];
+    final creatureRows = [
+      for (final c in costs)
+        _sortedPool(
+          cards
+              .where((x) => !x.isLand && x.isCreature && x.costBucket == c)
+              .toList(),
+        ),
+    ];
+    int maxLen(List<List<CardRating>> rows) =>
+        rows.fold(0, (m, r) => r.length > m ? r.length : m);
+    final maxTop = maxLen(spellRows);
+    final maxBottom = maxLen(creatureRows);
+    final topH = maxTop == 0 ? 0.0 : cardH + (maxTop - 1) * offset;
+    final bottomH = maxBottom == 0 ? 0.0 : cardH + (maxBottom - 1) * offset;
+    final creatures = creatureRows.fold(0, (s, r) => s + r.length);
+    final spells = spellRows.fold(0, (s, r) => s + r.length);
+    final nonLands = cards.where((c) => !c.isLand).toList();
+    final avgCost = nonLands.isEmpty
+        ? null
+        : nonLands.fold(0, (s, c) => s + c.cmc) / nonLands.length;
+    final scroll = LayoutBuilder(
+      builder: (context, constraints) => SingleChildScrollView(
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.fromLTRB(0, 8, 0, 8),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minWidth: constraints.maxWidth),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _cardStack(lands, w, offset, onTap, onSecondary),
+                    _columnLabel(
+                      'Lands',
+                      lands.length,
+                      showTargets ? 17 : null,
+                    ),
+                  ],
+                ),
+                for (final c in costs)
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (topH > 0)
+                        SizedBox(
+                          height: topH,
+                          width: w,
+                          child: Align(
+                            alignment: Alignment.bottomCenter,
+                            child: _cardStack(
+                              spellRows[c],
+                              w,
+                              offset,
+                              onTap,
+                              onSecondary,
+                            ),
+                          ),
+                        ),
+                      if (topH > 0 && bottomH > 0) const SizedBox(height: 6),
+                      if (bottomH > 0)
+                        SizedBox(
+                          height: bottomH,
+                          width: w,
+                          child: Align(
+                            alignment: Alignment.bottomCenter,
+                            child: _cardStack(
+                              creatureRows[c],
+                              w,
+                              offset,
+                              onTap,
+                              onSecondary,
+                            ),
+                          ),
+                        ),
+                      _columnLabel(
+                        c == 7 ? '7+' : '$c',
+                        spellRows[c].length + creatureRows[c].length,
+                        showTargets ? _curveTarget(c) : null,
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    if (!showTargets) return scroll;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
+          child: Row(
+            children: [
+              _totalLabel('Creatures', creatures, 16),
+              const SizedBox(width: 12),
+              _totalLabel('Noncreatures', spells, 7),
+              const SizedBox(width: 12),
+              Text(
+                'Avg cost ${avgCost == null ? '-' : avgCost.toStringAsFixed(2)}',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        Expanded(child: scroll),
+      ],
+    );
+  }
+
+  Widget _cardStack(
+    List<CardRating> cards,
+    double w,
+    double offset,
+    void Function(CardRating) onTap,
+    void Function(CardRating) onSecondary,
+  ) {
+    if (cards.isEmpty) return SizedBox(width: w);
+    final h = w * 1.4 + (cards.length - 1) * offset;
+    return SizedBox(
+      width: w,
+      height: h,
+      child: Stack(
+        children: [
+          for (var i = 0; i < cards.length; i++)
+            Positioned(
+              top: i * offset,
+              child: HoverZoom(
+                card: cards[i],
+                zoomWidth: _zoomSize,
+                enabled: _zoomEnabled,
+                child: GestureDetector(
+                  onTap: () => onTap(cards[i]),
+                  onSecondaryTap: () => onSecondary(cards[i]),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: cardImage(cards[i], width: w),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  int? _curveTarget(int cost) {
+    return switch (cost) {
+      0 => null,
+      1 => 1,
+      2 => 6,
+      3 => 6,
+      4 => 4,
+      5 => 3,
+      6 => 2,
+      _ => 1,
+    };
+  }
+
+  Widget _columnLabel(String label, int count, int? target) {
+    if (target == null) return Text(label);
+    final met = count >= target;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(label),
+        Text(
+          '$count/$target',
+          style: TextStyle(
+            fontSize: 11,
+            color: met ? const Color(0xFF4CAF6D) : null,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _totalLabel(String label, int count, int target) {
+    final met = count >= target;
+    return Text(
+      '$label $count/$target',
+      style: TextStyle(
+        fontSize: 12,
+        color: met ? const Color(0xFF4CAF6D) : null,
+      ),
+    );
+  }
+
+  // Sorted by color then name so piles are easy to scan
+  List<CardRating> _sortedPool(List<CardRating> pool) {
+    final sorted = List<CardRating>.from(pool)
+      ..sort((a, b) {
+        final c = a.color.compareTo(b.color);
+        return c != 0 ? c : a.name.compareTo(b.name);
+      });
+    return sorted;
   }
 
   List<CardRating> _filtered(List<CardRating> cards) {
