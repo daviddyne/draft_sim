@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'dart:io';
+import 'package:draft_sim/Services/log_reader_stub.dart'
+    if (dart.library.io) 'package:draft_sim/Services/log_reader_io.dart';
 
 // One event parsed out of the Arena log
 sealed class ArenaDraftEvent {}
@@ -55,71 +56,30 @@ class ArenaLogService {
 
   Stream<ArenaDraftEvent> get events => _controller.stream;
 
-  // Looks for Player.log in the usual Heroic and Wine prefix locations
-  // Heroic (also as Flatpak) nests prefixes two levels deep: Prefixes/<config>/<game>
-  static String? findLog() {
-    final home = Platform.environment['HOME'] ?? '';
-    const tails = [
-      'AppData/LocalLow/Wizards Of The Coast/MTGA/Player.log',
-      'AppData/LocalLow/Wizards Of The Coast/MTGA/player.log',
-    ];
-    final roots = <Directory>[];
-    final prefixRoot = Directory('$home/Games/Heroic/Prefixes');
-    if (prefixRoot.existsSync()) {
-      for (final level1 in prefixRoot.listSync().whereType<Directory>()) {
-        roots.add(level1);
-        for (final level2 in level1.listSync().whereType<Directory>()) {
-          roots.add(level2);
-        }
-      }
-    }
-    final candidates = <String>[];
-    for (final root in roots) {
-      for (final pfx in ['${root.path}/pfx', root.path]) {
-        final users = Directory('$pfx/drive_c/users');
-        if (!users.existsSync()) continue;
-        for (final u in users.listSync().whereType<Directory>()) {
-          for (final tail in tails) {
-            candidates.add('${u.path}/$tail');
-          }
-        }
-      }
-    }
-    final user = Platform.environment['USER'] ?? '';
-    for (final tail in tails) {
-      candidates.add('$home/.wine/drive_c/users/$user/$tail');
-    }
-    for (final c in candidates) {
-      if (File(c).existsSync()) return c;
-    }
-    return null;
-  }
+  // Finds Arena's log, desktop only
+  static String? findLog() => LogReader.findLog();
 
   // Parses the whole current session first (Arena wipes the log per restart),
   // then keeps tailing new lines. Huge logs are capped to the newest chunk.
   void start(String path) {
     stop();
-    final file = File(path);
     _offset = 0;
-    if (file.existsSync()) {
+    if (LogReader.exists(path)) {
       const cap = 32 * 1024 * 1024;
-      final len = file.lengthSync();
+      final len = LogReader.length(path);
       if (len > cap) _offset = len - cap;
-      _poll(file);
+      _poll(path);
     }
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _poll(file));
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _poll(path));
   }
 
-  void _poll(File file) {
-    if (!file.existsSync()) return;
-    final len = file.lengthSync();
+  void _poll(String path) {
+    if (!LogReader.exists(path)) return;
+    final len = LogReader.length(path);
     // Arena restarted and truncated the log
     if (len < _offset) _offset = 0;
     if (len == _offset) return;
-    final raf = file.openSync();
-    raf.setPositionSync(_offset);
-    final chunk = String.fromCharCodes(raf.readSync(len - _offset));
-    raf.closeSync();
+    final chunk = LogReader.read(path, _offset, len);
     _offset = len;
     _parse(chunk);
   }
@@ -130,40 +90,25 @@ class ArenaLogService {
   // Arena nests draft payloads as escaped JSON strings, so quotes may appear as \"
   static final _packRe = RegExp(r'\\?"PackCards\\?"\s*:\s*\\?"([0-9,\s]+)\\?"');
   static final _draftPackRe = RegExp(r'\\?"DraftPack\\?"\s*:\s*\[([^\]]*)\]');
-  static final _pickedCardsRe = RegExp(
-    r'\\?"PickedCards\\?"\s*:\s*\[([^\]]*)\]',
-  );
-  static final _pickCtxRe = RegExp(
-    r'DraftMakePick|BotDraft_DraftPick|PickGrpId',
-  );
-  static final _pickListRe = RegExp(
-    r'\\?"(?:Pick)?GrpIds\\?"\s*:\s*\[([0-9,\s]+)\]',
-  );
-  static final _pickRe = RegExp(
-    r'\\?"(?:PickGrpId|GrpId|CardId)\\?"\s*:\s*(\d+)',
-  );
+  static final _pickedCardsRe = RegExp(r'\\?"PickedCards\\?"\s*:\s*\[([^\]]*)\]');
+  static final _pickCtxRe = RegExp(r'DraftMakePick|BotDraft_DraftPick|PickGrpId');
+  static final _pickListRe = RegExp(r'\\?"(?:Pick)?GrpIds\\?"\s*:\s*\[([0-9,\s]+)\]');
+  static final _pickRe = RegExp(r'\\?"(?:PickGrpId|GrpId|CardId)\\?"\s*:\s*(\d+)');
   // Event names like PremierDraft_DFT_20260721 or QuickDraft_OTJ appear in draft payloads
   // Set codes are strictly uppercase, which filters out quest strings like Draft_Quest_
-  static final _eventRe = RegExp(
-    r'(PremierDraft|QuickDraft|TradDraft|BotDraft|CompDraft)_([A-Z0-9]{3,6})(?:_|\\?"|\s|$)',
-  );
+  static final _eventRe = RegExp(r'(PremierDraft|QuickDraft|TradDraft|BotDraft|CompDraft)_([A-Z0-9]{3,6})(?:_|\\?"|\s|$)');
   // Deck submissions carry MainDeck/Sideboard, in-match GRE messages use deckCards/sideboardCards
   // Deck payloads look like "MainDeck":[{"cardId":90553,"quantity":2},...]
   // Nested objects hold no ], so capturing up to the closing bracket is safe
   static final _deckMainRe = RegExp(
-    r'\\?"(?:MainDeck|deckCards|CardsInDeck)\\?"\s*:\s*\[([^\]]*)\]',
-    caseSensitive: false,
-  );
+      r'\\?"(?:MainDeck|deckCards|CardsInDeck)\\?"\s*:\s*\[([^\]]*)\]',
+      caseSensitive: false);
   static final _deckSideRe = RegExp(
-    r'\\?"(?:Sideboard|sideboardCards|CardsInSideboard)\\?"\s*:\s*\[([^\]]*)\]',
-    caseSensitive: false,
-  );
+      r'\\?"(?:Sideboard|sideboardCards|CardsInSideboard)\\?"\s*:\s*\[([^\]]*)\]',
+      caseSensitive: false);
   static final _numRe = RegExp(r'\d+');
   // One deck entry, quantity decides how many copies the card appears as
-  static final _entryRe = RegExp(
-    r'cardId\\?"?\s*:\s*(\d+)\s*,\s*\\?"?quantity\\?"?\s*:\s*(\d+)',
-    caseSensitive: false,
-  );
+  static final _entryRe = RegExp(r'cardId\\?"?\s*:\s*(\d+)\s*,\s*\\?"?quantity\\?"?\s*:\s*(\d+)', caseSensitive: false);
   // Any flat array, used when deck key names don't match the known ones
   static final _arrayRe = RegExp(r'\[([^\]]*)\]');
 
@@ -172,28 +117,20 @@ class ArenaLogService {
       _controller.add(DraftInfoEvent(m.group(1)!, m.group(2)!.toUpperCase()));
     }
     for (final m in _packRe.allMatches(chunk)) {
-      final ids = [
-        for (final s in m.group(1)!.split(',')) int.tryParse(s.trim()) ?? 0,
-      ];
+      final ids = [for (final s in m.group(1)!.split(',')) int.tryParse(s.trim()) ?? 0];
       final valid = ids.where((i) => i > 0).toList();
       if (valid.isNotEmpty) _controller.add(PackEvent(valid));
     }
     // Quick draft sends the pack as an array of id strings
     for (final m in _draftPackRe.allMatches(chunk)) {
-      final ids = [
-        for (final n in _numRe.allMatches(m.group(1)!)) int.parse(n.group(0)!),
-      ];
+      final ids = [for (final n in _numRe.allMatches(m.group(1)!)) int.parse(n.group(0)!)];
       final valid = ids.where((i) => i > 0).toList();
       if (valid.isNotEmpty) _controller.add(PackEvent(valid));
     }
     // Quick draft repeats the whole pool, which is safer than counting single picks
     for (final m in _pickedCardsRe.allMatches(chunk)) {
-      final ids = [
-        for (final n in _numRe.allMatches(m.group(1)!)) int.parse(n.group(0)!),
-      ];
-      if (ids.isNotEmpty) {
-        _controller.add(PoolEvent(ids.where((i) => i > 0).toList()));
-      }
+      final ids = [for (final n in _numRe.allMatches(m.group(1)!)) int.parse(n.group(0)!)];
+      if (ids.isNotEmpty) _controller.add(PoolEvent(ids.where((i) => i > 0).toList()));
     }
     for (final line in chunk.split('\n')) {
       if (!_pickCtxRe.hasMatch(line)) continue;
@@ -215,7 +152,7 @@ class ArenaLogService {
       // A sideboard alone still tells us the split, an empty one means everything is maindeck
       if (main == null && side == null) continue;
       _controller.add(DeckEvent(_expand(main), _expand(side)));
-    } // Key names for decks change between Arena versions, so also scan any deck line
+    }    // Key names for decks change between Arena versions, so also scan any deck line
     // for id arrays and let the cubit decide which ones are actually cards
     for (final line in chunk.split('\n')) {
       if (!line.toLowerCase().contains('deck')) continue;
@@ -223,14 +160,9 @@ class ArenaLogService {
         for (final m in _arrayRe.allMatches(line)) _expand(m),
       ].where((a) => a.length >= 10).toList();
       // Show the deck payload itself in diagnostics rather than the start of the line
-      final keyAt = line.toLowerCase().indexOf(
-        RegExp(r'maindeck|cardsindeck|deckcards'),
-      );
+      final keyAt = line.toLowerCase().indexOf(RegExp(r'maindeck|cardsindeck|deckcards'));
       final from = keyAt > 0 ? keyAt : 0;
-      final excerpt = line.substring(
-        from,
-        from + 600 > line.length ? line.length : from + 600,
-      );
+      final excerpt = line.substring(from, from + 600 > line.length ? line.length : from + 600);
       deckLines.add(excerpt);
       if (deckLines.length > 25) deckLines.removeAt(0);
       if (arrays.isNotEmpty) _controller.add(DeckCandidateEvent(arrays));
