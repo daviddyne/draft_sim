@@ -126,6 +126,16 @@ def merge(cards, info):
     return out
 
 
+def is_merged(path):
+    """True if the file is already in the app's merged format."""
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return isinstance(data, list) and (not data or 'image' in data[0])
+    except Exception:
+        return False
+
+
 def main():
     active = os.environ.get('ACTIVE', '').split()
     refresh_all = os.environ.get('REFRESH_ALL', 'false') == 'true'
@@ -146,8 +156,12 @@ def main():
         url = page.get('next_page') if page.get('has_more') else None
 
     for code in codes:
+        # Rebuild when asked, when the set is active, when missing, or when the
+        # file is still in an older format the app can't read
         wanted = [e for e in EVENTS
-                  if refresh_all or code in active or not os.path.exists(f'{OUT}/{code}_{e}.json')]
+                  if refresh_all or code in active
+                  or not os.path.exists(f'{OUT}/{code}_{e}.json')
+                  or not is_merged(f'{OUT}/{code}_{e}.json')]
         if not wanted:
             continue
         info = None
@@ -176,7 +190,7 @@ def main():
     # set the app would fail to open. Newest first, unknown dates last.
     sets = []
     for code in codes:
-        events = [e for e in EVENTS if os.path.exists(f'{OUT}/{code}_{e}.json')]
+        events = [e for e in EVENTS if is_merged(f'{OUT}/{code}_{e}.json')]
         if not events:
             continue
         name, released = names.get(code.upper(), ('', ''))
