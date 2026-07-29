@@ -27,17 +27,31 @@ jobs:
       REFRESH_ALL: ${{ inputs.refresh_all }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history, a rebase can't run on a shallow clone
+          fetch-depth: 0
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python3 tools/build_data.py
-      - name: Commit if changed
+
+      - name: Build data
+        run: python3 tools/build_data.py
+
+      - name: Commit and push
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add web/data
-          git diff --staged --quiet && exit 0
+          if git diff --staged --quiet; then
+            echo "No changes"
+            exit 0
+          fi
           git commit -m "Update card data"
-          # The run takes a while, so the branch may have moved on meanwhile
-          git pull --rebase
-          git push
+          # The build takes a while, so the branch may have moved on meanwhile
+          for attempt in 1 2 3; do
+            git pull --rebase origin main && git push && exit 0
+            echo "Push attempt $attempt failed, retrying"
+            sleep 5
+          done
+          exit 1
