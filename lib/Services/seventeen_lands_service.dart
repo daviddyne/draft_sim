@@ -9,8 +9,10 @@ class SetOption {
   final String code;
   final String name;
   final String released;
+  // Formats this set has data for, empty means all are worth trying
+  final List<String> events;
 
-  const SetOption(this.code, this.name, this.released);
+  const SetOption(this.code, this.name, this.released, {this.events = const []});
 }
 
 class SeventeenLandsService {
@@ -178,7 +180,12 @@ class SeventeenLandsService {
       final list = jsonDecode(response.body) as List;
       return [
         for (final e in list)
-          SetOption(e['code'] as String, (e['name'] ?? e['code']) as String, (e['released'] ?? '') as String),
+          SetOption(
+            e['code'] as String,
+            (e['name'] ?? e['code']) as String,
+            (e['released'] ?? '') as String,
+            events: [for (final v in (e['events'] as List? ?? [])) v as String],
+          ),
       ];
     }
     final body = jsonDecode(response.body);

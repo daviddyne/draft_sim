@@ -144,11 +144,6 @@ def main():
         for s in page.get('data', []):
             names[s['code'].upper()] = (s.get('name', ''), s.get('released_at', ''))
         url = page.get('next_page') if page.get('has_more') else None
-    sets = [{'code': c, 'name': names.get(c.upper(), (c, ''))[0], 'released': names.get(c.upper(), ('', ''))[1]}
-            for c in codes]
-    sets.sort(key=lambda s: s['released'], reverse=True)
-    with open(f'{OUT}/sets.json', 'w') as f:
-        json.dump(sets, f)
 
     for code in codes:
         wanted = [e for e in EVENTS
@@ -176,6 +171,20 @@ def main():
             if lands:
                 with open(f'{OUT}/{code}_lands.json', 'w') as f:
                     json.dump(lands, f)
+
+    # Only list sets that ended up with data, so the dropdown can't offer a
+    # set the app would fail to open. Newest first, unknown dates last.
+    sets = []
+    for code in codes:
+        events = [e for e in EVENTS if os.path.exists(f'{OUT}/{code}_{e}.json')]
+        if not events:
+            continue
+        name, released = names.get(code.upper(), ('', ''))
+        sets.append({'code': code, 'name': name or code, 'released': released, 'events': events})
+    sets.sort(key=lambda s: s['released'], reverse=True)
+    with open(f'{OUT}/sets.json', 'w') as f:
+        json.dump(sets, f)
+    print(f'{len(sets)} sets available to the app')
 
 
 if __name__ == '__main__':

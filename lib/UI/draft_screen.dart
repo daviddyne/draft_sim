@@ -209,6 +209,15 @@ class _DraftViewState extends State<_DraftView> {
     _refreshCached();
   }
 
+  String _eventLabel(String event) {
+    return switch (event) {
+      'PremierDraft' => 'Premier Draft',
+      'QuickDraft' => 'Quick Draft',
+      'TradDraft' => 'Traditional Draft',
+      _ => event,
+    };
+  }
+
   Future<void> _refreshCached() async {
     final list = await _downloadService.cache.listCached();
     if (mounted) setState(() => _cached = list);
@@ -551,23 +560,27 @@ class _DraftViewState extends State<_DraftView> {
               ),
             ),
             const SizedBox(height: 12),
-            DropdownButton<String>(
-              value: _eventType,
-              items: const [
-                DropdownMenuItem(
-                  value: 'PremierDraft',
-                  child: Text('Premier Draft'),
-                ),
-                DropdownMenuItem(
-                  value: 'QuickDraft',
-                  child: Text('Quick Draft'),
-                ),
-                DropdownMenuItem(
-                  value: 'TradDraft',
-                  child: Text('Traditional Draft'),
-                ),
-              ],
-              onChanged: (v) => setState(() => _eventType = v!),
+            Builder(
+              builder: (context) {
+                // Only offer formats the selected set actually has data for
+                final match = sets
+                    .where((s) => s.code == _setController.text.trim())
+                    .toList();
+                final available = match.isEmpty || match.first.events.isEmpty
+                    ? const ['PremierDraft', 'QuickDraft', 'TradDraft']
+                    : match.first.events;
+                final value = available.contains(_eventType)
+                    ? _eventType
+                    : available.first;
+                return DropdownButton<String>(
+                  value: value,
+                  items: [
+                    for (final e in available)
+                      DropdownMenuItem(value: e, child: Text(_eventLabel(e))),
+                  ],
+                  onChanged: (v) => setState(() => _eventType = v!),
+                );
+              },
             ),
             const SizedBox(height: 12),
             FilledButton(
