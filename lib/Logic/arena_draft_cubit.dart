@@ -74,6 +74,8 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
   final List<CardRating> _fullPool = [];
   // Pool as of the last report, so new picks can be told apart from old ones
   List<int> _lastPoolIds = [];
+  // Which draft the events belong to, a change means a new draft started
+  String _draftId = '';
   DeckEvent? _pendingDeck;
   bool _loadingSet = false;
   // Sets that failed to load, so a bad match can't be retried forever
@@ -85,6 +87,8 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
 
   // Raw material for the diagnostics view
   List<String> get deckLines => _log.deckLines;
+  List<String> get parsedEvents => _log.parsedEvents;
+  String get draftId => _draftId;
   int get poolCount => _fullPool.length;
   bool get deckApplied => _deckApplied;
 
@@ -106,7 +110,11 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
   }
 
   void _onEvent(ArenaDraftEvent e) {
-    if (e is DraftInfoEvent) {
+    if (e is DraftIdEvent) {
+      if (e.id == _draftId) return;
+      _draftId = e.id;
+      _startFresh();
+    } else if (e is DraftInfoEvent) {
       _onDraftInfo(e);
     } else if (e is PackEvent) {
       if (_byArenaId.isEmpty) {
@@ -127,7 +135,8 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
       }
       _applyPool(e.grpIds);
     } else if (e is DeckCandidateEvent) {
-      if (_byArenaId.isEmpty) return;
+      // Only meaningful once a draft is being tracked
+      if (_byArenaId.isEmpty || _fullPool.isEmpty) return;
       _applyCandidates(e.arrays);
     } else if (e is DeckEvent) {
       if (_byArenaId.isEmpty) {
@@ -143,6 +152,8 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
   void _applyPool(List<int> grpIds) {
     final cards = [for (final id in grpIds) ?_byArenaId[id]];
     if (cards.isEmpty) return;
+    // A pool never shrinks inside one draft, so this is a new one
+    if (cards.length < _fullPool.length) _startFresh();
     _fullPool
       ..clear()
       ..addAll(cards);
@@ -191,8 +202,14 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
   // The submitted deck is the authoritative main deck
   // If Arena logs a sideboard we use it, otherwise it is whatever the deck left over
   void _applyDeck(DeckEvent e) {
+    // Arena also logs decks for ordinary games, which say nothing about a draft
+    if (_fullPool.isEmpty) return;
     final main = [for (final id in e.mainIds) ?_byArenaId[id]];
     if (main.length < 20) return;
+    // The deck has to be built from cards this draft actually picked
+    final poolIds = _fullPool.map((c) => c.arenaId).toSet();
+    final fromPool = main.where((c) => poolIds.contains(c.arenaId)).length;
+    if (fromPool < main.length ~/ 2) return;
     var side = [for (final id in e.sideIds) ?_byArenaId[id]];
     if (side.isEmpty) {
       final rest = List<CardRating>.from(_fullPool);
@@ -303,8 +320,8 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
     emit(state.copyWith(pool: [...state.pool, card], pack: pack));
   }
 
-  // Clear the tracked draft without disconnecting, e.g. when starting a new one
-  void clearDraft() {
+  // Wipes what was tracked so a new draft doesn't inherit the previous one
+  void _startFresh() {
     _deckApplied = false;
     _fullPool.clear();
     _lastPoolIds = [];
@@ -317,6 +334,15 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
         unknownInfo: '',
       ),
     );
+  }
+
+  // Clear the tracked draft without disconnecting, e.g. when starting a new one
+  // Re-reads the log from the start, so the draft in progress is picked up again
+  void clearDraft() {
+    _draftId = '';
+    _startFresh();
+    final path = state.logPath;
+    if (path != null) _log.start(path);
   }
 
   @override

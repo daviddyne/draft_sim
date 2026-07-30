@@ -40,6 +40,13 @@ class DeckEvent extends ArenaDraftEvent {
   DeckEvent(this.mainIds, this.sideIds);
 }
 
+// Identifies which draft the following events belong to
+class DraftIdEvent extends ArenaDraftEvent {
+  final String id;
+
+  DraftIdEvent(this.id);
+}
+
 // Arrays found on a line that mentions a deck, the cubit decides which are real
 class DeckCandidateEvent extends ArenaDraftEvent {
   final List<List<int>> arrays;
@@ -53,6 +60,9 @@ class ArenaLogService {
   final _controller = StreamController<ArenaDraftEvent>.broadcast();
   // Recent log lines mentioning a deck, kept for the diagnostics view
   final List<String> deckLines = [];
+  // Everything the parser recognised, newest last, for the diagnostics view
+  final List<String> parsedEvents = [];
+  int _parses = 0;
 
   Stream<ArenaDraftEvent> get events => _controller.stream;
 
@@ -63,6 +73,7 @@ class ArenaLogService {
   // then keeps tailing new lines. Huge logs are capped to the newest chunk.
   void start(String path) {
     stop();
+    parsedEvents.clear();
     _offset = 0;
     if (LogReader.exists(path)) {
       const cap = 32 * 1024 * 1024;
@@ -96,6 +107,7 @@ class ArenaLogService {
   static final _pickRe = RegExp(r'\\?"(?:PickGrpId|GrpId|CardId)\\?"\s*:\s*(\d+)');
   // Event names like PremierDraft_DFT_20260721 or QuickDraft_OTJ appear in draft payloads
   // Set codes are strictly uppercase, which filters out quest strings like Draft_Quest_
+  static final _draftIdRe = RegExp(r'\\?"DraftId\\?"\s*:\s*\\?"([0-9a-fA-F-]{8,})');
   static final _eventRe = RegExp(r'(PremierDraft|QuickDraft|TradDraft|BotDraft|CompDraft)_([A-Z0-9]{3,6})(?:_|\\?"|\s|$)');
   // Deck submissions carry MainDeck/Sideboard, in-match GRE messages use deckCards/sideboardCards
   // Deck payloads look like "MainDeck":[{"cardId":90553,"quantity":2},...]
@@ -112,25 +124,51 @@ class ArenaLogService {
   // Any flat array, used when deck key names don't match the known ones
   static final _arrayRe = RegExp(r'\[([^\]]*)\]');
 
+  void _note(String line) {
+    parsedEvents.add(line);
+    if (parsedEvents.length > 200) {
+      // Deck lines repeat constantly, draft events are the interesting ones
+      final i = parsedEvents.indexWhere((e) => e.startsWith('deck'));
+      parsedEvents.removeAt(i >= 0 ? i : 0);
+    }
+  }
+
   void _parse(String chunk) {
+    _parses++;
+    _note('--- chunk ${chunk.length} bytes (parse $_parses)');
+    // A different draft id means a new draft, so the cubit can start fresh
+    final ids = {for (final m in _draftIdRe.allMatches(chunk)) m.group(1)!};
+    for (final id in ids) {
+      _note('draftId ${id.substring(0, 8)}');
+      _controller.add(DraftIdEvent(id));
+    }
     for (final m in _eventRe.allMatches(chunk)) {
       _controller.add(DraftInfoEvent(m.group(1)!, m.group(2)!.toUpperCase()));
     }
     for (final m in _packRe.allMatches(chunk)) {
       final ids = [for (final s in m.group(1)!.split(',')) int.tryParse(s.trim()) ?? 0];
       final valid = ids.where((i) => i > 0).toList();
-      if (valid.isNotEmpty) _controller.add(PackEvent(valid));
+      if (valid.isNotEmpty) {
+        _note('pack ${valid.length} cards');
+        _controller.add(PackEvent(valid));
+      }
     }
     // Quick draft sends the pack as an array of id strings
     for (final m in _draftPackRe.allMatches(chunk)) {
       final ids = [for (final n in _numRe.allMatches(m.group(1)!)) int.parse(n.group(0)!)];
       final valid = ids.where((i) => i > 0).toList();
-      if (valid.isNotEmpty) _controller.add(PackEvent(valid));
+      if (valid.isNotEmpty) {
+        _note('draftPack ${valid.length} cards');
+        _controller.add(PackEvent(valid));
+      }
     }
     // Quick draft repeats the whole pool, which is safer than counting single picks
     for (final m in _pickedCardsRe.allMatches(chunk)) {
       final ids = [for (final n in _numRe.allMatches(m.group(1)!)) int.parse(n.group(0)!)];
-      if (ids.isNotEmpty) _controller.add(PoolEvent(ids.where((i) => i > 0).toList()));
+      if (ids.isNotEmpty) {
+        _note('pool ${ids.length} cards');
+        _controller.add(PoolEvent(ids.where((i) => i > 0).toList()));
+      }
     }
     for (final line in chunk.split('\n')) {
       if (!_pickCtxRe.hasMatch(line)) continue;
@@ -143,7 +181,10 @@ class ArenaLogService {
         continue;
       }
       final m = _pickRe.firstMatch(line);
-      if (m != null) _controller.add(PickEvent(int.parse(m.group(1)!)));
+      if (m != null) {
+        _note('pick ${m.group(1)}');
+        _controller.add(PickEvent(int.parse(m.group(1)!)));
+      }
     }
     // Deck submissions come last so the main/sideboard split isn't overwritten by pool events
     for (final line in chunk.split('\n')) {
@@ -151,7 +192,10 @@ class ArenaLogService {
       final side = _deckSideRe.firstMatch(line);
       // A sideboard alone still tells us the split, an empty one means everything is maindeck
       if (main == null && side == null) continue;
-      _controller.add(DeckEvent(_expand(main), _expand(side)));
+      final mainIds = _expand(main);
+      final sideIds = _expand(side);
+      _note('deck main ${mainIds.length} side ${sideIds.length}');
+      _controller.add(DeckEvent(mainIds, sideIds));
     }    // Key names for decks change between Arena versions, so also scan any deck line
     // for id arrays and let the cubit decide which ones are actually cards
     for (final line in chunk.split('\n')) {
@@ -165,7 +209,9 @@ class ArenaLogService {
       final excerpt = line.substring(from, from + 600 > line.length ? line.length : from + 600);
       deckLines.add(excerpt);
       if (deckLines.length > 25) deckLines.removeAt(0);
-      if (arrays.isNotEmpty) _controller.add(DeckCandidateEvent(arrays));
+      if (arrays.isNotEmpty) {
+        _controller.add(DeckCandidateEvent(arrays));
+      }
     }
   }
 

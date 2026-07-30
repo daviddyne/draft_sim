@@ -195,24 +195,39 @@ class _LiveViewState extends State<_LiveView> {
     );
   }
 
-  // Shows what the log parser found, so a wrong split can be diagnosed
+  // Shows what the log parser found, so tracking problems can be diagnosed
   void _showDiagnostics(BuildContext context) {
     final cubit = context.read<ArenaDraftCubit>();
     final s = cubit.state;
-    final summary =
-        'pool ${cubit.poolCount} · maindeck ${s.pool.length} · sideboard ${s.sideboard.length} · '
-        'deck detected ${cubit.deckApplied}\nlog: ${s.logPath}\n\nRecent lines mentioning a deck:\n';
-    final body = cubit.deckLines.isEmpty
-        ? '${summary}none'
-        : summary + cubit.deckLines.join('\n\n');
+    final summary = StringBuffer()
+      ..writeln('set ${s.setCode} ${s.eventType}')
+      ..writeln('draft id ${cubit.draftId.isEmpty ? "none" : cubit.draftId}')
+      ..writeln(
+        'pool ${cubit.poolCount} · maindeck ${s.pool.length} · sideboard ${s.sideboard.length}',
+      )
+      ..writeln('deck detected ${cubit.deckApplied}')
+      ..writeln('log ${s.logPath}')
+      ..writeln('')
+      ..writeln('Parsed events, newest last:')
+      ..writeln(
+        cubit.parsedEvents.isEmpty ? '(none)' : cubit.parsedEvents.join('\n'),
+      )
+      ..writeln('')
+      ..writeln('Recent lines mentioning a deck:')
+      ..writeln(
+        cubit.deckLines.isEmpty ? '(none)' : cubit.deckLines.join('\n\n'),
+      );
     showDialog<void>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Deck detection'),
+        title: const Text('Tracking diagnostics'),
         content: SizedBox(
           width: 900,
           child: SingleChildScrollView(
-            child: SelectableText(body, style: const TextStyle(fontSize: 11)),
+            child: SelectableText(
+              summary.toString(),
+              style: const TextStyle(fontSize: 11),
+            ),
           ),
         ),
         actions: [
@@ -515,7 +530,7 @@ class _LiveViewState extends State<_LiveView> {
   }
 
   // Curve view: lands far left, columns by cost with spells on top, creatures below
-  // Cards scale to fit so every column from lands to 7+ stays visible
+  // Cards scale to fit so every column from lands to 6+ stays visible
   // Read only, the split mirrors the deck built in Arena
   Widget _curve(
     List<CardRating> cards, {
@@ -524,7 +539,7 @@ class _LiveViewState extends State<_LiveView> {
   }) {
     if (cards.isEmpty) return Center(child: Text(emptyText));
     final lands = _sortedPool(cards.where((c) => c.isLand).toList());
-    final costs = List.generate(8, (i) => i);
+    final costs = List.generate(7, (i) => i);
     final spellRows = [
       for (final c in costs)
         _sortedPool(
@@ -579,7 +594,11 @@ class _LiveViewState extends State<_LiveView> {
                       child: _cardStack(lands, w, offset),
                     ),
                   ),
-                  _columnLabel('Lands', lands.length, showTargets ? 17 : null),
+                  _columnLabel(
+                    'Lands',
+                    lands.length,
+                    showTargets ? (16, 18) : null,
+                  ),
                 ],
               ),
             ),
@@ -596,6 +615,8 @@ class _LiveViewState extends State<_LiveView> {
                           child: _cardStack(spellRows[c], w, offset),
                         ),
                       ),
+                    if (showTargets && topH > 0)
+                      _rowCount(spellRows[c].length, _spellRange(c)),
                     if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
                     if (bottomH > 0)
                       SizedBox(
@@ -605,34 +626,39 @@ class _LiveViewState extends State<_LiveView> {
                           child: _cardStack(creatureRows[c], w, offset),
                         ),
                       ),
-                    _columnLabel(
-                      c == 7 ? '7+' : '$c',
-                      spellRows[c].length + creatureRows[c].length,
-                      showTargets ? _curveTarget(c) : null,
-                    ),
+                    if (showTargets && bottomH > 0)
+                      _rowCount(creatureRows[c].length, _creatureRange(c)),
+                    Text(c == 6 ? '6+' : '$c'),
                   ],
                 ),
               ),
           ],
         );
-        if (!showTargets) return SingleChildScrollView(child: grid);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
-              child: Row(
-                children: [
-                  _totalLabel('Creatures', totalCreatures, 16),
-                  const SizedBox(width: 12),
-                  _totalLabel('Noncreatures', totalSpells, 7),
-                  const SizedBox(width: 12),
-                  Text(
-                    'Avg cost ${avgCost == null ? '-' : avgCost.toStringAsFixed(2)}',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ],
-              ),
+              // Sideboard keeps an equally tall header so both curves line up
+              child: showTargets
+                  ? Row(
+                      children: [
+                        Text(
+                          'Picked ${cards.length}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        const SizedBox(width: 12),
+                        _totalLabel('Creatures', totalCreatures, (14, 17)),
+                        const SizedBox(width: 12),
+                        _totalLabel('Noncreatures', totalSpells, (6, 9)),
+                        const SizedBox(width: 12),
+                        _avgCostLabel(avgCost),
+                      ],
+                    )
+                  : Text(
+                      'Sideboard ${cards.length}',
+                      style: const TextStyle(fontSize: 12),
+                    ),
             ),
             Expanded(child: SingleChildScrollView(child: grid)),
           ],
@@ -641,16 +667,16 @@ class _LiveViewState extends State<_LiveView> {
     );
   }
 
-  // Largest card width that keeps all nine columns and both rows in view
+  // Largest card width that keeps all eight columns and both rows in view
   double _fitCardWidth(
     BoxConstraints box,
     int maxTop,
     int maxBottom,
     bool showTargets,
   ) {
-    const columns = 9;
+    const columns = 8;
     final byWidth = (box.maxWidth - 8) / columns;
-    final labels = showTargets ? 54.0 : 30.0;
+    final labels = showTargets ? 82.0 : 30.0;
     final rows =
         (maxTop == 0 ? 0.0 : 1.4 + 0.15 * (maxTop - 1)) +
         (maxBottom == 0 ? 0.0 : 1.4 + 0.15 * (maxBottom - 1));
@@ -687,44 +713,99 @@ class _LiveViewState extends State<_LiveView> {
     );
   }
 
-  int? _curveTarget(int cost) {
+  // Common limited guidance for a 17 land deck, split by card type
+  (int, int)? _creatureRange(int cost) {
     return switch (cost) {
       0 => null,
-      1 => 1,
-      2 => 6,
-      3 => 6,
-      4 => 4,
-      5 => 3,
-      6 => 2,
-      _ => 1,
+      1 => (0, 2),
+      2 => (4, 6),
+      3 => (3, 5),
+      4 => (2, 4),
+      5 => (1, 3),
+      _ => (0, 2),
     };
   }
 
-  Widget _columnLabel(String label, int count, int? target) {
-    if (target == null) return Text(label);
-    final met = count >= target;
+  // Noncreatures are fewer and sit lower, removal and tricks mostly
+  (int, int)? _spellRange(int cost) {
+    return switch (cost) {
+      0 => null,
+      1 => (0, 2),
+      2 => (1, 3),
+      3 => (1, 3),
+      4 => (0, 2),
+      5 => (0, 1),
+      _ => (0, 1),
+    };
+  }
+
+  // Small count under a stack, green while inside the recommended range
+  Widget _rowCount(int count, (int, int)? range) {
+    if (range == null) return const SizedBox(height: 14);
+    final ok = count >= range.$1 && count <= range.$2;
+    return SizedBox(
+      height: 14,
+      child: Text(
+        '$count/${_rangeLabel(range)}',
+        style: TextStyle(
+          fontSize: 10,
+          color: ok ? const Color(0xFF4CAF6D) : null,
+        ),
+      ),
+    );
+  }
+
+  // Count against the recommended range, with the middle of the range in
+  // brackets, green while inside it
+  Widget _columnLabel(String label, int count, (int, int)? range) {
+    if (range == null) return Text(label);
+    final ok = count >= range.$1 && count <= range.$2;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(label),
         Text(
-          '$count/$target',
+          '$count/${_rangeLabel(range)}',
           style: TextStyle(
             fontSize: 11,
-            color: met ? const Color(0xFF4CAF6D) : null,
+            color: ok ? const Color(0xFF4CAF6D) : null,
           ),
         ),
       ],
     );
   }
 
-  Widget _totalLabel(String label, int count, int target) {
-    final met = count >= target;
+  // 5-7(6) or 2-3(2.5), one decimal only when the middle isn't whole
+  String _rangeLabel((int, int) range) {
+    final mid = (range.$1 + range.$2) / 2;
+    final label = mid == mid.roundToDouble()
+        ? mid.round().toString()
+        : mid.toStringAsFixed(1);
+    return '${range.$1}-${range.$2}($label)';
+  }
+
+  // Deck total against the recommended range, green while inside it
+  Widget _totalLabel(String label, int count, (int, int) range) {
+    final ok = count >= range.$1 && count <= range.$2;
     return Text(
-      '$label $count/$target',
+      '$label $count/${_rangeLabel(range)}',
       style: TextStyle(
         fontSize: 12,
-        color: met ? const Color(0xFF4CAF6D) : null,
+        color: ok ? const Color(0xFF4CAF6D) : null,
+      ),
+    );
+  }
+
+  // Average mana value of the nonland cards, most limited decks sit near three
+  Widget _avgCostLabel(double? avg) {
+    const low = 2.8;
+    const high = 3.3;
+    final ok = avg != null && avg >= low && avg <= high;
+    return Text(
+      'Avg cost ${avg == null ? '-' : avg.toStringAsFixed(1)}/$low-$high(${((low + high) / 2).toStringAsFixed(1)})',
+      style: TextStyle(
+        fontSize: 12,
+        color: ok ? const Color(0xFF4CAF6D) : null,
       ),
     );
   }

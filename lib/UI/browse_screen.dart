@@ -53,6 +53,58 @@ class _BrowseViewState extends State<_BrowseView> {
   // Cards clicked away so they don't drag the averages
   final Set<String> _excluded = {};
   RankStat _rankStat = RankStat.gihwr;
+  // Lets several sets be mixed, e.g. for a chaos draft
+  void _showSetPicker(BuildContext context) {
+    final cubit = context.read<BrowseCubit>();
+    showDialog<void>(
+      context: context,
+      builder: (_) => BlocProvider.value(
+        value: cubit,
+        child: AlertDialog(
+          title: const Text('Sets in this view'),
+          content: SizedBox(
+            width: 420,
+            height: 460,
+            child: BlocBuilder<BrowseCubit, BrowseState>(
+              builder: (context, state) {
+                final options = state.available.isEmpty
+                    ? [for (final c in state.setCodes) SetOption(c, c, '')]
+                    : state.available;
+                return Column(
+                  children: [
+                    if (state.loading) const LinearProgressIndicator(),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: options.length,
+                        itemBuilder: (context, i) {
+                          final option = options[i];
+                          final on = state.setCodes.contains(option.code);
+                          return CheckboxListTile(
+                            dense: true,
+                            value: on,
+                            title: Text('${option.name} (${option.code})', overflow: TextOverflow.ellipsis),
+                            onChanged: (_) => cubit.toggleSet(option.code),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => cubit.addAll(),
+              child: const Text('Add all sets'),
+            ),
+            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Done')),
+          ],
+        ),
+      ),
+    );
+  }
+
   // All filter rows can be collapsed to leave more room for cards
   bool _showFilters = true;
   // Deck being built from the browsed cards
@@ -78,8 +130,19 @@ class _BrowseViewState extends State<_BrowseView> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('${widget.setCode.toUpperCase()} card browser'),
+        title: BlocBuilder<BrowseCubit, BrowseState>(
+          builder: (context, state) => Text(
+            state.setCodes.length <= 3
+                ? '${state.setCodes.join(' + ')} card browser'
+                : '${state.setCodes.length} sets · ${state.cards.length} cards',
+          ),
+        ),
         actions: [
+          IconButton(
+            tooltip: 'Choose sets',
+            icon: const Icon(Icons.library_add),
+            onPressed: () => _showSetPicker(context),
+          ),
           IconButton(
             tooltip: _showFilters ? 'Hide filters' : 'Show filters',
             icon: Icon(_showFilters ? Icons.filter_alt : Icons.filter_alt_off),
@@ -571,7 +634,7 @@ class _BrowseViewState extends State<_BrowseView> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onVerticalDragUpdate: (d) => setState(() {
-          _bottomHeight = (_bottomHeight - d.delta.dy).clamp(80.0, MediaQuery.of(context).size.height * 0.7);
+          _bottomHeight = (_bottomHeight - d.delta.dy).clamp(80.0, MediaQuery.of(context).size.height * 0.92);
         }),
         child: SizedBox(
           // Tall grab area, the visible bar stays thin
@@ -647,7 +710,7 @@ class _BrowseViewState extends State<_BrowseView> {
   }) {
     if (cards.isEmpty) return Center(child: Text(emptyText));
     final lands = _sortedPool(cards.where((c) => c.isLand).toList());
-    final costs = List.generate(8, (i) => i);
+    final costs = List.generate(7, (i) => i);
     final spellRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && !x.isCreature && x.costBucket == c).toList())];
     final creatureRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && x.isCreature && x.costBucket == c).toList())];
     int maxLen(List<List<CardRating>> rows) => rows.fold(0, (m, r) => r.length > m ? r.length : m);
@@ -680,7 +743,7 @@ class _BrowseViewState extends State<_BrowseView> {
                       child: _cardStack(lands, w, offset, onTap, onSecondary),
                     ),
                   ),
-                  _columnLabel('Lands', lands.length, showTargets ? 17 : null),
+                  _columnLabel('Lands', lands.length, showTargets ? (16, 18) : null),
                 ],
               ),
             ),
@@ -697,6 +760,7 @@ class _BrowseViewState extends State<_BrowseView> {
                           child: _cardStack(spellRows[c], w, offset, onTap, onSecondary),
                         ),
                       ),
+                    if (showTargets && topH > 0) _rowCount(spellRows[c].length, _spellRange(c)),
                     if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
                     if (bottomH > 0)
                       SizedBox(
@@ -706,29 +770,32 @@ class _BrowseViewState extends State<_BrowseView> {
                           child: _cardStack(creatureRows[c], w, offset, onTap, onSecondary),
                         ),
                       ),
-                    _columnLabel(c == 7 ? '7+' : '$c', spellRows[c].length + creatureRows[c].length,
-                        showTargets ? _curveTarget(c) : null),
+                    if (showTargets && bottomH > 0) _rowCount(creatureRows[c].length, _creatureRange(c)),
+                    Text(c == 6 ? '6+' : '$c'),
                   ],
                 ),
               ),
           ],
         );
-        if (!showTargets) return SingleChildScrollView(child: grid);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
-              child: Row(
+              // Sideboard keeps an equally tall header so both curves line up
+              child: showTargets
+                  ? Row(
                 children: [
-                  _totalLabel('Creatures', creatures, 16),
+                  Text('Deck ${cards.length}', style: const TextStyle(fontSize: 12)),
                   const SizedBox(width: 12),
-                  _totalLabel('Noncreatures', spells, 7),
+                  _totalLabel('Creatures', creatures, (14, 17)),
                   const SizedBox(width: 12),
-                  Text('Avg cost ${avgCost == null ? '-' : avgCost.toStringAsFixed(2)}',
-                      style: const TextStyle(fontSize: 12)),
+                  _totalLabel('Noncreatures', spells, (6, 9)),
+                  const SizedBox(width: 12),
+                  _avgCostLabel(avgCost),
                 ],
-              ),
+              )
+                  : Text('Sideboard ${cards.length}', style: const TextStyle(fontSize: 12)),
             ),
             Expanded(child: SingleChildScrollView(child: grid)),
           ],
@@ -737,11 +804,11 @@ class _BrowseViewState extends State<_BrowseView> {
     );
   }
 
-  // Largest card width that keeps all nine columns and both rows in view
+  // Largest card width that keeps all eight columns and both rows in view
   double _fitCardWidth(BoxConstraints box, int maxTop, int maxBottom, bool showTargets) {
-    const columns = 9;
+    const columns = 8;
     final byWidth = (box.maxWidth - 8) / columns;
-    final labels = showTargets ? 54.0 : 30.0;
+    final labels = showTargets ? 82.0 : 30.0;
     final rows = (maxTop == 0 ? 0.0 : 1.4 + 0.15 * (maxTop - 1)) +
         (maxBottom == 0 ? 0.0 : 1.4 + 0.15 * (maxBottom - 1));
     final byHeight = rows <= 0 ? byWidth : (box.maxHeight - labels) / rows;
@@ -781,35 +848,83 @@ class _BrowseViewState extends State<_BrowseView> {
     );
   }
 
-  int? _curveTarget(int cost) {
+  // Common limited guidance for a 17 land deck, split by card type
+  (int, int)? _creatureRange(int cost) {
     return switch (cost) {
       0 => null,
-      1 => 1,
-      2 => 6,
-      3 => 6,
-      4 => 4,
-      5 => 3,
-      6 => 2,
-      _ => 1,
+      1 => (0, 2),
+      2 => (4, 6),
+      3 => (3, 5),
+      4 => (2, 4),
+      5 => (1, 3),
+      _ => (0, 2),
     };
   }
 
-  Widget _columnLabel(String label, int count, int? target) {
-    if (target == null) return Text(label);
-    final met = count >= target;
+  // Noncreatures are fewer and sit lower, removal and tricks mostly
+  (int, int)? _spellRange(int cost) {
+    return switch (cost) {
+      0 => null,
+      1 => (0, 2),
+      2 => (1, 3),
+      3 => (1, 3),
+      4 => (0, 2),
+      5 => (0, 1),
+      _ => (0, 1),
+    };
+  }
+
+  // Small count under a stack, green while inside the recommended range
+  Widget _rowCount(int count, (int, int)? range) {
+    if (range == null) return const SizedBox(height: 14);
+    final ok = count >= range.$1 && count <= range.$2;
+    return SizedBox(
+      height: 14,
+      child: Text('$count/${_rangeLabel(range)}',
+          style: TextStyle(fontSize: 10, color: ok ? const Color(0xFF4CAF6D) : null)),
+    );
+  }
+
+  // Count against the recommended range, with the middle of the range in
+  // brackets, green while inside it
+  Widget _columnLabel(String label, int count, (int, int)? range) {
+    if (range == null) return Text(label);
+    final ok = count >= range.$1 && count <= range.$2;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(label),
-        Text('$count/$target', style: TextStyle(fontSize: 11, color: met ? const Color(0xFF4CAF6D) : null)),
+        Text('$count/${_rangeLabel(range)}',
+            style: TextStyle(fontSize: 11, color: ok ? const Color(0xFF4CAF6D) : null)),
       ],
     );
   }
 
-  Widget _totalLabel(String label, int count, int target) {
-    final met = count >= target;
-    return Text('$label $count/$target',
-        style: TextStyle(fontSize: 12, color: met ? const Color(0xFF4CAF6D) : null));
+  // 5-7(6) or 2-3(2.5), one decimal only when the middle isn't whole
+  String _rangeLabel((int, int) range) {
+    final mid = (range.$1 + range.$2) / 2;
+    final label = mid == mid.roundToDouble() ? mid.round().toString() : mid.toStringAsFixed(1);
+    return '${range.$1}-${range.$2}($label)';
+  }
+
+  // Deck total against the recommended range, green while inside it
+  Widget _totalLabel(String label, int count, (int, int) range) {
+    final ok = count >= range.$1 && count <= range.$2;
+    return Text(
+      '$label $count/${_rangeLabel(range)}',
+      style: TextStyle(fontSize: 12, color: ok ? const Color(0xFF4CAF6D) : null),
+    );
+  }
+
+  // Average mana value of the nonland cards, most limited decks sit near three
+  Widget _avgCostLabel(double? avg) {
+    const low = 2.8;
+    const high = 3.3;
+    final ok = avg != null && avg >= low && avg <= high;
+    return Text(
+      'Avg cost ${avg == null ? '-' : avg.toStringAsFixed(1)}/$low-$high(${((low + high) / 2).toStringAsFixed(1)})',
+      style: TextStyle(fontSize: 12, color: ok ? const Color(0xFF4CAF6D) : null),
+    );
   }
 
   // Sorted by color then name so piles are easy to scan

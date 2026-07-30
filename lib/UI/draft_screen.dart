@@ -77,12 +77,44 @@ class HoverZoom extends StatefulWidget {
 }
 
 class _HoverZoomState extends State<HoverZoom> {
+  // Every mounted card, so a drag can find whichever one is under the finger
+  static final Set<_HoverZoomState> _live = {};
   OverlayEntry? _entry;
 
   @override
+  void initState() {
+    super.initState();
+    _live.add(this);
+  }
+
+  @override
   void dispose() {
+    _live.remove(this);
     _hide();
     super.dispose();
+  }
+
+  // Card under the given screen position, if any
+  static _HoverZoomState? _at(Offset position) {
+    for (final state in _live) {
+      final box = state.context.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize) continue;
+      final rect = box.localToGlobal(Offset.zero) & box.size;
+      if (rect.contains(position)) return state;
+    }
+    return null;
+  }
+
+  // Moves the preview to whatever card the finger is over now
+  void _dragTo(Offset position) {
+    final target = _at(position);
+    if (target == null) return;
+    if (target != this) {
+      _hide();
+      target._show(position);
+    } else if (_entry == null) {
+      _show(position);
+    }
   }
 
   void _show(Offset pointer) {
@@ -155,6 +187,13 @@ class _HoverZoomState extends State<HoverZoom> {
     _entry = null;
   }
 
+  // A drag can leave the preview owned by another card
+  static void _hideAll() {
+    for (final state in _live) {
+      state._hide();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
@@ -168,8 +207,10 @@ class _HoverZoomState extends State<HoverZoom> {
             () => LongPressGestureRecognizer(duration: const Duration(milliseconds: 180)),
             (r) {
               r.onLongPressStart = (d) => _show(d.globalPosition);
-              r.onLongPressEnd = (_) => _hide();
-              r.onLongPressCancel = _hide;
+              // Sliding onto another card previews that one instead
+              r.onLongPressMoveUpdate = (d) => _dragTo(d.globalPosition);
+              r.onLongPressEnd = (_) => _hideAll();
+              r.onLongPressCancel = _hideAll;
             },
           ),
         },
@@ -502,7 +543,7 @@ class _DraftViewState extends State<_DraftView> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onVerticalDragUpdate: (d) => setState(() {
-          _poolHeight = (_poolHeight - d.delta.dy).clamp(60.0, MediaQuery.of(context).size.height * 0.75);
+          _poolHeight = (_poolHeight - d.delta.dy).clamp(60.0, MediaQuery.of(context).size.height * 0.92);
         }),
         child: SizedBox(
           // Tall grab area, the visible bar stays thin
@@ -810,12 +851,12 @@ class _DraftViewState extends State<_DraftView> {
   }
 
   // Curve view: lands far left, columns by cost with spells on top, creatures below
-  // Cards scale to fit so every column from lands to 7+ stays visible
+  // Cards scale to fit so every column from lands to 6+ stays visible
   // Right click or long press a card to move it to the other side
   Widget _curve(List<CardRating> cards, {required void Function(CardRating) onSecondary, required bool showTargets, required String emptyText}) {
     if (cards.isEmpty) return Center(child: Text(emptyText));
     final lands = _sortedPool(cards.where((c) => c.isLand).toList());
-    final costs = List.generate(8, (i) => i);
+    final costs = List.generate(7, (i) => i);
     final spellRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && !x.isCreature && x.costBucket == c).toList())];
     final creatureRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && x.isCreature && x.costBucket == c).toList())];
     int maxLen(List<List<CardRating>> rows) => rows.fold(0, (m, r) => r.length > m ? r.length : m);
@@ -845,7 +886,7 @@ class _DraftViewState extends State<_DraftView> {
                     height: bottomH,
                     child: Align(alignment: Alignment.bottomCenter, child: _cardStack(lands, w, offset, onSecondary)),
                   ),
-                  _columnLabel('Lands', lands.length, showTargets ? 17 : null),
+                  _columnLabel('Lands', lands.length, showTargets ? (16, 18) : null),
                 ],
               ),
             ),
@@ -859,33 +900,39 @@ class _DraftViewState extends State<_DraftView> {
                         height: topH,
                         child: Align(alignment: Alignment.bottomCenter, child: _cardStack(spellRows[c], w, offset, onSecondary)),
                       ),
+                    if (showTargets && topH > 0) _rowCount(spellRows[c].length, _spellRange(c)),
                     if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
                     if (bottomH > 0)
                       SizedBox(
                         height: bottomH,
                         child: Align(alignment: Alignment.bottomCenter, child: _cardStack(creatureRows[c], w, offset, onSecondary)),
                       ),
-                    _columnLabel(c == 7 ? '7+' : '$c', spellRows[c].length + creatureRows[c].length, showTargets ? _curveTarget(c) : null),
+                    if (showTargets && bottomH > 0) _rowCount(creatureRows[c].length, _creatureRange(c)),
+                    Text(c == 6 ? '6+' : '$c'),
                   ],
                 ),
               ),
           ],
         );
-        if (!showTargets) return SingleChildScrollView(child: grid);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
-              child: Row(
+              // Sideboard keeps an equally tall header so both curves line up
+              child: showTargets
+                  ? Row(
                 children: [
-                  _totalLabel('Creatures', totalCreatures, 16),
+                  Text('Picked ${cards.length}', style: const TextStyle(fontSize: 12)),
                   const SizedBox(width: 12),
-                  _totalLabel('Noncreatures', totalSpells, 7),
+                  _totalLabel('Creatures', totalCreatures, (14, 17)),
                   const SizedBox(width: 12),
-                  Text('Avg cost ${avgCost == null ? '-' : avgCost.toStringAsFixed(2)}', style: const TextStyle(fontSize: 12)),
+                  _totalLabel('Noncreatures', totalSpells, (6, 9)),
+                  const SizedBox(width: 12),
+                  _avgCostLabel(avgCost),
                 ],
-              ),
+              )
+                  : Text('Sideboard ${cards.length}', style: const TextStyle(fontSize: 12)),
             ),
             Expanded(child: SingleChildScrollView(child: grid)),
           ],
@@ -894,11 +941,11 @@ class _DraftViewState extends State<_DraftView> {
     );
   }
 
-  // Largest card width that keeps all nine columns and both rows in view
+  // Largest card width that keeps all eight columns and both rows in view
   double _fitCardWidth(BoxConstraints box, int maxTop, int maxBottom, bool showTargets) {
-    const columns = 9;
+    const columns = 8;
     final byWidth = (box.maxWidth - 8) / columns;
-    final labels = showTargets ? 54.0 : 30.0;
+    final labels = showTargets ? 82.0 : 30.0;
     final rows = (maxTop == 0 ? 0.0 : 1.4 + 0.15 * (maxTop - 1)) +
         (maxBottom == 0 ? 0.0 : 1.4 + 0.15 * (maxBottom - 1));
     final byHeight = rows <= 0 ? byWidth : (box.maxHeight - labels) / rows;
@@ -907,38 +954,82 @@ class _DraftViewState extends State<_DraftView> {
     return (fit < preferred ? fit : preferred).clamp(24.0, 400.0);
   }
 
-  int? _curveTarget(int cost) {
+  // Common limited guidance for a 17 land deck, split by card type
+  (int, int)? _creatureRange(int cost) {
     return switch (cost) {
       0 => null,
-      1 => 1,
-      2 => 6,
-      3 => 6,
-      4 => 4,
-      5 => 3,
-      6 => 2,
-      _ => 1,
+      1 => (0, 2),
+      2 => (4, 6),
+      3 => (3, 5),
+      4 => (2, 4),
+      5 => (1, 3),
+      _ => (0, 2),
     };
   }
 
-  // Cost label with the stack count against the recommended curve amount
-  Widget _columnLabel(String label, int count, int? target) {
-    if (target == null) return Text(label);
-    final met = count >= target;
+  // Noncreatures are fewer and sit lower, removal and tricks mostly
+  (int, int)? _spellRange(int cost) {
+    return switch (cost) {
+      0 => null,
+      1 => (0, 2),
+      2 => (1, 3),
+      3 => (1, 3),
+      4 => (0, 2),
+      5 => (0, 1),
+      _ => (0, 1),
+    };
+  }
+
+  // Small count under a stack, green while inside the recommended range
+  Widget _rowCount(int count, (int, int)? range) {
+    if (range == null) return const SizedBox(height: 14);
+    final ok = count >= range.$1 && count <= range.$2;
+    return SizedBox(
+      height: 14,
+      child: Text('$count/${_rangeLabel(range)}',
+          style: TextStyle(fontSize: 10, color: ok ? const Color(0xFF4CAF6D) : null)),
+    );
+  }
+
+  // Count against the recommended range, with the middle of the range in
+  // brackets, green while inside it
+  Widget _columnLabel(String label, int count, (int, int)? range) {
+    if (range == null) return Text(label);
+    final ok = count >= range.$1 && count <= range.$2;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(label),
-        Text('$count/$target', style: TextStyle(fontSize: 11, color: met ? const Color(0xFF4CAF6D) : null)),
+        Text('$count/${_rangeLabel(range)}',
+            style: TextStyle(fontSize: 11, color: ok ? const Color(0xFF4CAF6D) : null)),
       ],
     );
   }
 
-  // Deck total with recommended amount, green when met
-  Widget _totalLabel(String label, int count, int target) {
-    final met = count >= target;
+  // 5-7(6) or 2-3(2.5), one decimal only when the middle isn't whole
+  String _rangeLabel((int, int) range) {
+    final mid = (range.$1 + range.$2) / 2;
+    final label = mid == mid.roundToDouble() ? mid.round().toString() : mid.toStringAsFixed(1);
+    return '${range.$1}-${range.$2}($label)';
+  }
+
+  // Deck total against the recommended range, green while inside it
+  Widget _totalLabel(String label, int count, (int, int) range) {
+    final ok = count >= range.$1 && count <= range.$2;
     return Text(
-      '$label $count/$target',
-      style: TextStyle(fontSize: 12, color: met ? const Color(0xFF4CAF6D) : null),
+      '$label $count/${_rangeLabel(range)}',
+      style: TextStyle(fontSize: 12, color: ok ? const Color(0xFF4CAF6D) : null),
+    );
+  }
+
+  // Average mana value of the nonland cards, most limited decks sit near three
+  Widget _avgCostLabel(double? avg) {
+    const low = 2.8;
+    const high = 3.3;
+    final ok = avg != null && avg >= low && avg <= high;
+    return Text(
+      'Avg cost ${avg == null ? '-' : avg.toStringAsFixed(1)}/$low-$high(${((low + high) / 2).toStringAsFixed(1)})',
+      style: TextStyle(fontSize: 12, color: ok ? const Color(0xFF4CAF6D) : null),
     );
   }
 

@@ -56,23 +56,6 @@ class CardRating {
     );
   }
 
-  // Same card but pointing at a downloaded image file
-  CardRating withLocalImage(String path) {
-    return CardRating(
-      name: name,
-      color: color,
-      rarity: rarity,
-      imageUrl: path,
-      gihwr: gihwr,
-      iwd: iwd,
-      alsa: alsa,
-      cmc: cmc,
-      typeLine: typeLine,
-      oracleText: oracleText,
-      arenaId: arenaId,
-    );
-  }
-
   Map<String, dynamic> toCache() {
     return {
       'name': name,
@@ -113,8 +96,8 @@ class CardRating {
 
   bool get isCreature => _frontType.contains('Creature');
 
-  // Curve column, everything at 7 or more shares one pile
-  int get costBucket => cmc >= 7 ? 7 : cmc;
+  // Curve column, everything at 6 or more shares one pile
+  int get costBucket => cmc >= 6 ? 6 : cmc;
 
   // 0.55 -> "55.0%"
   String get gihwrLabel => gihwr == null ? '-' : '${(gihwr! * 100).toStringAsFixed(1)}%';
