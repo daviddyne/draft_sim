@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:draft_sim/Logic/browse_cubit.dart';
 import 'package:draft_sim/Models/card_rating.dart';
 import 'package:draft_sim/Services/seventeen_lands_service.dart';
@@ -41,6 +43,9 @@ class _BrowseView extends StatefulWidget {
 
 class _BrowseViewState extends State<_BrowseView> {
   final _searchController = TextEditingController();
+  // Typing is debounced, filtering every keystroke is slow on weaker devices
+  String _searchTerm = '';
+  Timer? _debounce;
   final Set<String> _colors = {};
   // Include multicolor cards that contain any selected color
   bool _multicolor = false;
@@ -122,8 +127,20 @@ class _BrowseViewState extends State<_BrowseView> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged(List<CardRating> cards) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 250), () {
+      if (!mounted) return;
+      setState(() {
+        _searchTerm = _searchController.text.trim().toLowerCase();
+        _syncColors(cards);
+      });
+    });
   }
 
   @override
@@ -198,11 +215,12 @@ class _BrowseViewState extends State<_BrowseView> {
           if (state.error != null) {
             return Center(child: Text(state.error!, style: TextStyle(color: Theme.of(context).colorScheme.error)));
           }
-          final filtered = _ranked(_filtered(state.cards));
+          _rebuildDerived(state.cards);
+          final filtered = _memoFiltered;
           // Chips stay in place, dimmed when nothing matching them is left
-          final availableTypes = _availableTypes(state.cards);
-          final availableRarities = _availableRarities(state.cards);
-          final availableColors = _availableColors(state.cards);
+          final availableTypes = _memoTypes;
+          final availableRarities = _memoRarities;
+          final availableColors = _memoColors;
           return Column(
             children: [
               if (_showFilters)
@@ -218,7 +236,7 @@ class _BrowseViewState extends State<_BrowseView> {
                           isDense: true,
                           border: OutlineInputBorder(),
                         ),
-                        onChanged: (_) => setState(() => _syncColors(state.cards)),
+                        onChanged: (_) => _onSearchChanged(state.cards),
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -326,38 +344,57 @@ class _BrowseViewState extends State<_BrowseView> {
               _buildSummary(context, filtered),
               const Divider(height: 1),
               Expanded(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(child: _buildGrid(filtered)),
-                    _buildVSplitter(),
-                    SizedBox(width: _rankWidth, child: _buildRankPanel(filtered)),
-                  ],
+                child: LayoutBuilder(
+                  builder: (context, box) {
+                    final hasDeck = _deck.isNotEmpty || _side.isNotEmpty;
+                    // Can take the whole area, only the drag handle has to stay visible
+                    final bottom = hasDeck ? _bottomHeight.clamp(0.0, (box.maxHeight - 22).clamp(0.0, box.maxHeight)) : 0.0;
+                    return Column(
+                      children: [
+                        Expanded(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Expanded(child: _buildGrid(filtered)),
+                              _buildVSplitter(),
+                              SizedBox(width: _rankWidth, child: _buildRankPanel(filtered)),
+                            ],
+                          ),
+                        ),
+                        if (hasDeck) ...[
+                          _buildHSplitter(),
+                          SizedBox(
+                            height: bottom,
+                            child: LayoutBuilder(
+                              builder: (context, inner) => Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  SizedBox(
+                                    width: splitSize(inner.maxWidth, _sideSplit),
+                                    child: _curve(_deck,
+                                        showTargets: true,
+                                        emptyText: 'Click cards to add them',
+                                        onTap: _fromDeck,
+                                        onSecondary: _deckToSide),
+                                  ),
+                                  _buildSideSplitter(inner.maxWidth),
+                                  Expanded(
+                                    child: _curve(_side,
+                                        showTargets: false,
+                                        emptyText: 'Sideboard empty',
+                                        onTap: _fromSide,
+                                        onSecondary: _sideToDeck),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    );
+                  },
                 ),
               ),
-              if (_deck.isNotEmpty || _side.isNotEmpty) ...[
-                _buildHSplitter(),
-                SizedBox(
-                  height: _bottomHeight,
-                  child: LayoutBuilder(
-                    builder: (context, constraints) => Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        SizedBox(
-                          width: (constraints.maxWidth * _sideSplit - 11).clamp(0.0, constraints.maxWidth - 22),
-                          child: _curve(_deck, showTargets: true, emptyText: 'Click cards to add them',
-                              onTap: _fromDeck, onSecondary: _deckToSide),
-                        ),
-                        _buildSideSplitter(constraints.maxWidth),
-                        Expanded(
-                          child: _curve(_side, showTargets: false, emptyText: 'Sideboard empty',
-                              onTap: _fromSide, onSecondary: _sideToDeck),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
             ],
           );
         },
@@ -576,15 +613,16 @@ class _BrowseViewState extends State<_BrowseView> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final h = constraints.maxHeight;
-        final topH = hasSide ? (h * _deckSplit - 11).clamp(0.0, h - 22) : h;
+        final topH = hasSide ? splitSize(h, _deckSplit) : h;
         return Column(
           children: [
             SizedBox(
               height: topH,
               child: Column(
                 children: [
-                  _buildHeader(context),
-                  const Divider(height: 1),
+                  // The header is dropped when the pane is dragged too small for it
+                  if (topH >= 70) _buildHeader(context),
+                  if (topH >= 70) const Divider(height: 1),
                   Expanded(
                     child: filtered.isEmpty
                         ? const Center(child: Text('No cards match'))
@@ -634,7 +672,7 @@ class _BrowseViewState extends State<_BrowseView> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onVerticalDragUpdate: (d) => setState(() {
-          _bottomHeight = (_bottomHeight - d.delta.dy).clamp(80.0, MediaQuery.of(context).size.height * 0.92);
+          _bottomHeight = (_bottomHeight - d.delta.dy).clamp(0.0, MediaQuery.of(context).size.height);
         }),
         child: SizedBox(
           // Tall grab area, the visible bar stays thin
@@ -937,6 +975,33 @@ class _BrowseViewState extends State<_BrowseView> {
     return sorted;
   }
 
+  // Everything derived from the filters, recomputed only when they change
+  String? _memoKey;
+  List<CardRating> _memoFiltered = const [];
+  Set<String> _memoTypes = const {};
+  Set<String> _memoRarities = const {};
+  Set<String> _memoColors = const {};
+
+  void _rebuildDerived(List<CardRating> cards) {
+    final key = [
+      cards.length,
+      _searchTerm,
+      _colors.toList()..sort(),
+      _multicolor,
+      _types.toList()..sort(),
+      _rarities.toList()..sort(),
+      _minGih,
+      _rankStat,
+      _excluded.length,
+    ].join('|');
+    if (key == _memoKey) return;
+    _memoKey = key;
+    _memoFiltered = _ranked(_filtered(cards));
+    _memoTypes = _availableTypes(cards);
+    _memoRarities = _availableRarities(cards);
+    _memoColors = _availableColors(cards);
+  }
+
   List<CardRating> _filtered(List<CardRating> cards) {
     return [
       for (final c in cards)
@@ -945,7 +1010,7 @@ class _BrowseViewState extends State<_BrowseView> {
   }
 
   bool _passesNonColor(CardRating c, {bool ignoreTypes = false, bool ignoreRarities = false}) {
-    final q = _searchController.text.trim().toLowerCase();
+    final q = _searchTerm;
     if (q.isNotEmpty &&
         !c.name.toLowerCase().contains(q) &&
         !c.typeLine.toLowerCase().contains(q) &&
@@ -954,7 +1019,9 @@ class _BrowseViewState extends State<_BrowseView> {
     }
     if (!ignoreRarities && _rarities.isNotEmpty && !_rarities.contains(c.rarity)) return false;
     // Match against the front face so spell//land backsides don't count as lands
-    if (!ignoreTypes && _types.isNotEmpty && !_types.any((t) => c.typeLine.split(' // ').first.contains(t))) return false;
+    if (!ignoreTypes && _types.isNotEmpty) {
+      if (!_types.any((t) => c.typeLine.split(' // ').first.contains(t))) return false;
+    }
     // With a floor set, unrated cards (low sample) are dropped too
     if (_minGih > 0 && (c.gihwr == null || c.gihwr! * 100 < _minGih)) return false;
     return true;
