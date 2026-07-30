@@ -64,14 +64,16 @@ def card_info(set_code):
         for c in scryfall_search(q):
             faces = c.get('card_faces') or []
             oracle = c.get('oracle_text') or '\n'.join(f.get('oracle_text', '') for f in faces)
-            image = (c.get('image_uris') or {}).get('normal') or ''
-            if not image and faces:
-                image = (faces[0].get('image_uris') or {}).get('normal', '')
+            uris = c.get('image_uris') or (faces[0].get('image_uris') if faces else {}) or {}
+            image = uris.get('normal', '')
+            # A smaller variant for grids and stacks, much less to download
+            small = uris.get('small', '')
             entry = {
                 'cmc': int(c.get('cmc') or 0),
                 'type': c.get('type_line', ''),
                 'oracle': oracle,
                 'image': image,
+                'small': small,
                 'arenaId': c.get('arena_id'),
             }
             full = c['name']
@@ -110,11 +112,13 @@ def merge(cards, info):
         image = extra.get('image') or c.get('url') or ''
         if not image:
             continue
+        small = extra.get('small') or image
         out.append({
             'name': c.get('name', ''),
             'color': c.get('color', ''),
             'rarity': c.get('rarity', ''),
             'image': image,
+            'small': small,
             'gihwr': c.get('ever_drawn_win_rate'),
             'iwd': c.get('drawn_improvement_win_rate'),
             'alsa': c.get('avg_seen'),

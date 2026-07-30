@@ -26,14 +26,27 @@ Widget cardImage(CardRating card, {double? width, BoxFit? fit, double? decodeWid
           ),
         ),
       );
-  // Decoding at roughly the displayed size keeps memory down on weaker devices
+  // Decoding at roughly the displayed size keeps memory down on weaker devices.
+  // Not on web: resizing there decodes the bytes itself, which needs CORS headers
+  // the image host doesn't send, and the card would fail to load at all.
   final target = decodeWidth ?? width;
-  final cacheWidth = target == null ? null : (target * 1.5).round().clamp(64, 720);
+  final cacheWidth = kIsWeb || target == null ? null : (target * 1.5).round().clamp(64, 720);
+  // Small art for small cards, the full image only for the zoom preview
+  final url = (decodeWidth ?? width ?? 0) <= 260 ? card.gridImageUrl : card.imageUrl;
   final bytes = _imageCache.image(card.name);
   if (bytes != null) {
     return Image.memory(bytes, width: width, fit: fit, cacheWidth: cacheWidth, errorBuilder: fallback);
   }
-  return Image.network(card.imageUrl, width: width, fit: fit, cacheWidth: cacheWidth, errorBuilder: fallback);
+  return Image.network(
+    url,
+    width: width,
+    fit: fit,
+    cacheWidth: cacheWidth,
+    // On web the canvas renderer needs CORS headers the image host may not send,
+    // so fall back to a plain img element, which has no such restriction
+    webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+    errorBuilder: fallback,
+  );
 }
 
 final _imageCache = CardCacheService();

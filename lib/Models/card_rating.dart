@@ -3,6 +3,8 @@ class CardRating {
   final String color;
   final String rarity;
   final String imageUrl;
+  // Lower resolution art for grids and stacks, falls back to the full image
+  final String smallImageUrl;
   final double? gihwr;
   final double? iwd;
   final double? alsa;
@@ -18,6 +20,7 @@ class CardRating {
     required this.color,
     required this.rarity,
     required this.imageUrl,
+    this.smallImageUrl = '',
     this.gihwr,
     this.iwd,
     this.alsa,
@@ -46,6 +49,7 @@ class CardRating {
       color: json['color'] ?? '',
       rarity: json['rarity'] ?? '',
       imageUrl: json['image'] ?? '',
+      smallImageUrl: json['small'] ?? '',
       gihwr: (json['gihwr'] as num?)?.toDouble(),
       iwd: (json['iwd'] as num?)?.toDouble(),
       alsa: (json['alsa'] as num?)?.toDouble(),
@@ -62,6 +66,7 @@ class CardRating {
       'color': color,
       'rarity': rarity,
       'image': imageUrl,
+      'small': smallImageUrl,
       'gihwr': gihwr,
       'iwd': iwd,
       'alsa': alsa,
@@ -79,6 +84,7 @@ class CardRating {
       rarity: rarity,
       // Scryfall image links rotate, so a freshly fetched one beats the stored 17lands one
       imageUrl: freshImageUrl.isNotEmpty ? freshImageUrl : imageUrl,
+      smallImageUrl: smallImageUrl,
       gihwr: gihwr,
       iwd: iwd,
       alsa: alsa,
@@ -90,6 +96,9 @@ class CardRating {
   }
 
   // Double faced cards get their front face type
+  // Art to use when the card is drawn small
+  String get gridImageUrl => smallImageUrl.isNotEmpty ? smallImageUrl : imageUrl;
+
   String get _frontType => typeLine.split(' // ').first;
 
   bool get isLand => _frontType.contains('Land');
