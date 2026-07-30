@@ -10,6 +10,8 @@ class BrowseState {
   final List<String> setCodes;
   // Sets that could be added, from the same source the start screen uses
   final List<SetOption> available;
+  // Basic lands, so a deck can include them
+  final List<CardRating> lands;
 
   const BrowseState({
     this.loading = false,
@@ -17,6 +19,7 @@ class BrowseState {
     this.cards = const [],
     this.setCodes = const [],
     this.available = const [],
+    this.lands = const [],
   });
 
   BrowseState copyWith({
@@ -25,6 +28,7 @@ class BrowseState {
     List<CardRating>? cards,
     List<String>? setCodes,
     List<SetOption>? available,
+    List<CardRating>? lands,
   }) {
     return BrowseState(
       loading: loading ?? this.loading,
@@ -32,6 +36,7 @@ class BrowseState {
       cards: cards ?? this.cards,
       setCodes: setCodes ?? this.setCodes,
       available: available ?? this.available,
+      lands: lands ?? this.lands,
     );
   }
 }
@@ -50,6 +55,15 @@ class BrowseCubit extends Cubit<BrowseState> {
     await _fetch(setCode);
     _publish();
     _loadAvailable();
+    _loadLands(setCode);
+  }
+
+  Future<void> _loadLands(String setCode) async {
+    try {
+      emit(state.copyWith(lands: await _service.fetchBasicLands(setCode, eventType: _eventType)));
+    } catch (_) {
+      // Without art the deck simply can't show basics
+    }
   }
 
   Future<void> _loadAvailable() async {

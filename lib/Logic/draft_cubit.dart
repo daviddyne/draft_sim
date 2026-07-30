@@ -4,6 +4,7 @@ import 'package:draft_sim/Services/seventeen_lands_service.dart';
 import 'package:draft_sim/pack_generator.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+
 class DraftState {
   final bool loading;
   final String? error;
@@ -11,6 +12,8 @@ class DraftState {
   final List<List<CardRating>> packs;
   final List<CardRating> playerPool;
   final List<CardRating> sideboard;
+  // Basic lands for this set, so they can be added to the deck
+  final List<CardRating> lands;
   final int packNumber;
   final int pickNumber;
   final bool finished;
@@ -22,6 +25,7 @@ class DraftState {
     this.packs = const [],
     this.playerPool = const [],
     this.sideboard = const [],
+    this.lands = const [],
     this.packNumber = 0,
     this.pickNumber = 0,
     this.finished = false,
@@ -37,6 +41,7 @@ class DraftState {
     List<List<CardRating>>? packs,
     List<CardRating>? playerPool,
     List<CardRating>? sideboard,
+    List<CardRating>? lands,
     int? packNumber,
     int? pickNumber,
     bool? finished,
@@ -48,6 +53,7 @@ class DraftState {
       packs: packs ?? this.packs,
       playerPool: playerPool ?? this.playerPool,
       sideboard: sideboard ?? this.sideboard,
+      lands: lands ?? this.lands,
       packNumber: packNumber ?? this.packNumber,
       pickNumber: pickNumber ?? this.pickNumber,
       finished: finished ?? this.finished,
@@ -72,8 +78,9 @@ class DraftCubit extends Cubit<DraftState> {
     try {
       emit(state.copyWith(sets: await _service.fetchSets()));
       _setsLoadedAt = DateTime.now();
-    } catch (_) {
-      // Dropdown stays empty, typing a code still works
+    } catch (e) {
+      // Show why the dropdown is empty, typing a code still works
+      emit(state.copyWith(error: 'Could not load the set list: $e'));
     }
   }
 
@@ -93,8 +100,14 @@ class DraftCubit extends Cubit<DraftState> {
     try {
       final cards = await _service.fetchRatings(setCode, eventType: eventType);
       _generator = PackGenerator(cards);
+      // Optional, a draft still works without art for basics
+      var lands = <CardRating>[];
+      try {
+        lands = await _service.fetchBasicLands(setCode, eventType: eventType);
+      } catch (_) {}
       emit(DraftState(
         sets: state.sets,
+        lands: lands,
         packs: List.generate(seats, (_) => _generator!.generatePack()),
         packNumber: 1,
         pickNumber: 1,
@@ -135,6 +148,16 @@ class DraftCubit extends Cubit<DraftState> {
       sideboard: side,
       pickNumber: state.pickNumber + 1,
     ));
+  }
+
+  // Basics aren't drafted, they're added while building the deck
+  void addLand(CardRating land) {
+    emit(state.copyWith(playerPool: [...state.playerPool, land]));
+  }
+
+  void removeCard(CardRating card) {
+    final pool = List<CardRating>.from(state.playerPool)..remove(card);
+    emit(state.copyWith(playerPool: pool));
   }
 
   // Move a picked card to the sideboard

@@ -479,7 +479,7 @@ class _DraftViewState extends State<_DraftView> {
         builder: (context, state) {
           if (state.loading) return const Center(child: CircularProgressIndicator());
           if (state.packNumber == 0) return _buildSetup(context, state.error, state.sets);
-          if (state.finished) return _buildFinished(state.playerPool, state.sideboard);
+          if (state.finished) return _buildFinished(state);
           return LayoutBuilder(
             builder: (context, box) {
               // Can take the whole area, only the drag handle has to stay visible
@@ -849,6 +849,37 @@ class _DraftViewState extends State<_DraftView> {
     );
   }
 
+  // Basics aren't drafted, so they get their own add buttons
+  Widget _basicLandBar(List<CardRating> lands, void Function(CardRating) onAdd) {
+    if (lands.isEmpty) return const SizedBox.shrink();
+    const names = {'W': 'Plains', 'U': 'Island', 'B': 'Swamp', 'R': 'Mountain', 'G': 'Forest'};
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text('Add land', style: TextStyle(fontSize: 11)),
+        const SizedBox(width: 4),
+        for (final entry in names.entries)
+          if (lands.where((l) => l.name == entry.value).firstOrNull case final land?)
+            Padding(
+              padding: const EdgeInsets.only(right: 3),
+              child: Tooltip(
+                message: entry.value,
+                child: InkWell(
+                  onTap: () => onAdd(land),
+                  child: Container(
+                    width: 20,
+                    height: 20,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(color: _manaColor(entry.key), shape: BoxShape.circle),
+                    child: Text(entry.key, style: const TextStyle(fontSize: 11, color: Colors.black)),
+                  ),
+                ),
+              ),
+            ),
+      ],
+    );
+  }
+
   // Whole row tinted with the card's colors, gradient for multicolor
   BoxDecoration _rowDecoration(String color) {
     final letters = color.isEmpty ? ['C'] : color.split('');
@@ -868,30 +899,21 @@ class _DraftViewState extends State<_DraftView> {
     };
   }
 
-  // Small mana dots so the card's colors are visible at a glance
-  Widget _colorPips(String color) {
-    final letters = color.isEmpty ? ['C'] : color.split('');
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (final l in letters)
-          Container(
-            width: 10,
-            height: 10,
-            margin: const EdgeInsets.only(right: 2),
-            decoration: BoxDecoration(color: _manaColor(l), shape: BoxShape.circle),
-          ),
-      ],
-    );
-  }
 
   // Main deck curve on the left half, sideboard curve on the right half
-  Widget _buildPool(List<CardRating> pool, List<CardRating> sideboard) {
+  Widget _buildPool(List<CardRating> pool, List<CardRating> sideboard, {List<CardRating> lands = const []}) {
     final cubit = context.read<DraftCubit>();
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(child: _curve(pool, onSecondary: cubit.toSideboard, showTargets: true, emptyText: 'No picks yet')),
+        Expanded(
+          child: _curve(pool,
+              onSecondary: cubit.toSideboard,
+              showTargets: true,
+              emptyText: 'No picks yet',
+              lands: lands,
+              onAddLand: cubit.addLand),
+        ),
         Container(width: 2, color: Theme.of(context).dividerColor),
         Expanded(child: _curve(sideboard, onSecondary: cubit.toPool, showTargets: false, emptyText: 'Sideboard empty')),
       ],
@@ -901,7 +923,13 @@ class _DraftViewState extends State<_DraftView> {
   // Curve view: lands far left, columns by cost with spells on top, creatures below
   // Cards scale to fit so every column from lands to 6+ stays visible
   // Right click or long press a card to move it to the other side
-  Widget _curve(List<CardRating> cards, {required void Function(CardRating) onSecondary, required bool showTargets, required String emptyText}) {
+  Widget _curve(List<CardRating> cards, {
+    required void Function(CardRating) onSecondary,
+    required bool showTargets,
+    required String emptyText,
+    List<CardRating> lands = const [],
+    void Function(CardRating)? onAddLand,
+  }) {
     if (cards.isEmpty) return Center(child: Text(emptyText));
     final lands = _sortedPool(cards.where((c) => c.isLand).toList());
     final costs = List.generate(7, (i) => i);
@@ -978,6 +1006,8 @@ class _DraftViewState extends State<_DraftView> {
                   _totalLabel('Noncreatures', totalSpells, (6, 9)),
                   const SizedBox(width: 12),
                   _avgCostLabel(avgCost),
+                  if (onAddLand != null) const SizedBox(width: 12),
+                  if (onAddLand != null) _basicLandBar(lands, onAddLand),
                 ],
               )
                   : Text('Sideboard ${cards.length}', style: const TextStyle(fontSize: 12)),
@@ -1111,39 +1141,32 @@ class _DraftViewState extends State<_DraftView> {
     );
   }
 
-  Widget _buildFinished(List<CardRating> pool, List<CardRating> sideboard) {
-    return ListView(
-      padding: const EdgeInsets.all(8),
+  // Drafting is over, so the deck and sideboard get the whole screen
+  Widget _buildFinished(DraftState state) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final card in _sortedPool(pool)) _finishedTile(card),
-        if (sideboard.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Text('Sideboard', style: Theme.of(context).textTheme.titleMedium),
+        Expanded(child: _buildPool(state.playerPool, state.sideboard, lands: state.lands)),
+        _buildVSplitter(),
+        SizedBox(
+          width: _rankWidth,
+          child: LayoutBuilder(
+            builder: (context, box) => Column(
+              children: [
+                SizedBox(
+                  height: splitSize(box.maxHeight, _rankSplit),
+                  child: _buildRankTable(context, 'Your picks', state.playerPool, pickable: false),
+                ),
+                _buildRankSplitter(box.maxHeight),
+                Expanded(child: _buildRankTable(context, 'Sideboard', state.sideboard, pickable: false)),
+              ],
+            ),
           ),
-        for (final card in _sortedPool(sideboard)) _finishedTile(card),
+        ),
       ],
     );
   }
 
-  Widget _finishedTile(CardRating card) {
-    return HoverZoom(
-      card: card,
-      zoomWidth: _zoomSize,
-      enabled: _zoomEnabled,
-      child: ListTile(
-        leading: cardImage(card, width: 44, decodeWidth: 44),
-        title: Row(
-          children: [
-            _colorPips(card.color),
-            const SizedBox(width: 6),
-            Flexible(child: Text(card.name, overflow: TextOverflow.ellipsis)),
-          ],
-        ),
-        subtitle: Text('GIH ${card.gihwrLabel} · IWD ${card.iwdLabel} · ALSA ${card.alsaLabel}'),
-      ),
-    );
-  }
 
   List<CardRating> _ranked(List<CardRating> cards) {
     final sorted = List<CardRating>.from(cards);
