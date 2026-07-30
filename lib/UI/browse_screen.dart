@@ -344,55 +344,58 @@ class _BrowseViewState extends State<_BrowseView> {
               _buildSummary(context, filtered),
               const Divider(height: 1),
               Expanded(
-                child: LayoutBuilder(
-                  builder: (context, box) {
-                    final hasDeck = _deck.isNotEmpty || _side.isNotEmpty;
-                    // Can take the whole area, only the drag handle has to stay visible
-                    final bottom = hasDeck ? _bottomHeight.clamp(0.0, (box.maxHeight - 22).clamp(0.0, box.maxHeight)) : 0.0;
-                    return Column(
-                      children: [
-                        Expanded(
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                // Ranks run the full height on the right, the deck sits under the grid
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      child: LayoutBuilder(
+                        builder: (context, box) {
+                          final hasDeck = _deck.isNotEmpty || _side.isNotEmpty;
+                          // Can take the whole area, only the drag handle has to stay visible
+                          final bottom = hasDeck
+                              ? _bottomHeight.clamp(0.0, (box.maxHeight - 22).clamp(0.0, box.maxHeight))
+                              : 0.0;
+                          return Column(
                             children: [
                               Expanded(child: _buildGrid(filtered)),
-                              _buildVSplitter(),
-                              SizedBox(width: _rankWidth, child: _buildRankPanel(filtered)),
+                              if (hasDeck) ...[
+                                _buildHSplitter(),
+                                SizedBox(
+                                  height: bottom,
+                                  child: LayoutBuilder(
+                                    builder: (context, inner) => Row(
+                                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                                      children: [
+                                        SizedBox(
+                                          width: splitSize(inner.maxWidth, _sideSplit),
+                                          child: _curve(_deck,
+                                              showTargets: true,
+                                              emptyText: 'Click cards to add them',
+                                              onTap: _fromDeck,
+                                              onSecondary: _deckToSide),
+                                        ),
+                                        _buildSideSplitter(inner.maxWidth),
+                                        Expanded(
+                                          child: _curve(_side,
+                                              showTargets: false,
+                                              emptyText: 'Sideboard empty',
+                                              onTap: _fromSide,
+                                              onSecondary: _sideToDeck),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ],
-                          ),
-                        ),
-                        if (hasDeck) ...[
-                          _buildHSplitter(),
-                          SizedBox(
-                            height: bottom,
-                            child: LayoutBuilder(
-                              builder: (context, inner) => Row(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  SizedBox(
-                                    width: splitSize(inner.maxWidth, _sideSplit),
-                                    child: _curve(_deck,
-                                        showTargets: true,
-                                        emptyText: 'Click cards to add them',
-                                        onTap: _fromDeck,
-                                        onSecondary: _deckToSide),
-                                  ),
-                                  _buildSideSplitter(inner.maxWidth),
-                                  Expanded(
-                                    child: _curve(_side,
-                                        showTargets: false,
-                                        emptyText: 'Sideboard empty',
-                                        onTap: _fromSide,
-                                        onSecondary: _sideToDeck),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    );
-                  },
+                          );
+                        },
+                      ),
+                    ),
+                    _buildVSplitter(),
+                    SizedBox(width: _rankWidth, child: _buildRankPanel(filtered)),
+                  ],
                 ),
               ),
             ],
@@ -938,11 +941,11 @@ class _BrowseViewState extends State<_BrowseView> {
     );
   }
 
-  // 5-7(6) or 2-3(2.5), one decimal only when the middle isn't whole
+  // 5(4-6) or 2.5(2-3), middle first, one decimal only when it isn't whole
   String _rangeLabel((int, int) range) {
     final mid = (range.$1 + range.$2) / 2;
     final label = mid == mid.roundToDouble() ? mid.round().toString() : mid.toStringAsFixed(1);
-    return '${range.$1}-${range.$2}($label)';
+    return '$label(${range.$1}-${range.$2})';
   }
 
   // Deck total against the recommended range, green while inside it
@@ -960,7 +963,7 @@ class _BrowseViewState extends State<_BrowseView> {
     const high = 3.3;
     final ok = avg != null && avg >= low && avg <= high;
     return Text(
-      'Avg cost ${avg == null ? '-' : avg.toStringAsFixed(1)}/$low-$high(${((low + high) / 2).toStringAsFixed(1)})',
+      'Avg cost ${avg == null ? '-' : avg.toStringAsFixed(1)}/${((low + high) / 2).toStringAsFixed(1)}($low-$high)',
       style: TextStyle(fontSize: 12, color: ok ? const Color(0xFF4CAF6D) : null),
     );
   }
