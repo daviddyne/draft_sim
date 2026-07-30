@@ -15,6 +15,7 @@ import urllib.request
 OUT = 'web/data'
 UA = {'User-Agent': 'DraftSim/1.0', 'Accept': 'application/json'}
 EVENTS = ['PremierDraft', 'QuickDraft', 'TradDraft']
+PAIRS = ['WU', 'WB', 'WR', 'WG', 'UB', 'UR', 'UG', 'BR', 'BG', 'RG']
 # Bonus sheets that show up in a set's draft packs
 SHEETS = {
     'OTJ': ['big', 'otp'],
@@ -184,6 +185,24 @@ def main():
                 json.dump(merged, f)
             print(f'  {code} {event}: {len(merged)} cards')
             time.sleep(1)
+        # Per pair ratings, only for sets being drafted now, they multiply the data
+        if code in active:
+            for pair in PAIRS:
+                path = f'{OUT}/{code}_PremierDraft_{pair}.json'
+                if os.path.exists(path) and not refresh_all and code not in active:
+                    continue
+                raw = get(f'https://www.17lands.com/api/card_data?expansion={code}'
+                          f'&event_type=PremierDraft&time_period=ALL_TIME&colors={pair}')
+                rows = (raw.get('data') if isinstance(raw, dict) else raw) or []
+                if not rows:
+                    continue
+                slim = [{'name': r.get('name', ''), 'gihwr': r.get('ever_drawn_win_rate')}
+                        for r in rows if r.get('name')]
+                with open(path, 'w') as f:
+                    json.dump(slim, f)
+                print(f'  {code} {pair}: {len(slim)} cards')
+                time.sleep(1)
+
         if info is not None:
             lands = basics(code)
             if lands:

@@ -37,10 +37,38 @@ class SeventeenLandsService {
   }
 
   // On web without a proxy the data comes from the app's own files
-  static Uri _cardDataUrl(String setCode, String eventType, String timePeriod) {
-    final live = '$_base?expansion=${setCode.toUpperCase()}&event_type=$eventType&time_period=$timePeriod';
-    if (_static) return Uri.parse('$_dataBase/${setCode.toUpperCase()}_$eventType.json');
+  // colors filters the ratings to decks of that pair, e.g. WU
+  static Uri _cardDataUrl(String setCode, String eventType, String timePeriod, {String colors = ''}) {
+    final suffix = colors.isEmpty ? '' : '&colors=$colors';
+    final live = '$_base?expansion=${setCode.toUpperCase()}&event_type=$eventType&time_period=$timePeriod$suffix';
+    if (_static) {
+      final pair = colors.isEmpty ? '' : '_$colors';
+      return Uri.parse('$_dataBase/${setCode.toUpperCase()}_$eventType$pair.json');
+    }
     return _url(live);
+  }
+
+  // Card name to win rate for decks of one color pair, empty when unavailable
+  Future<Map<String, double>> fetchPairRatings(String setCode, String eventType, String colors) async {
+    try {
+      final uri = _cardDataUrl(setCode, eventType, 'ALL_TIME', colors: colors);
+      final response = await http.get(uri).timeout(_timeout);
+      if (response.statusCode != 200) return const {};
+      final body = jsonDecode(response.body);
+      final list = (body is Map ? body['data'] : body) as List?;
+      if (list == null) return const {};
+      final out = <String, double>{};
+      for (final e in list) {
+        final row = e as Map<String, dynamic>;
+        final name = (row['name'] ?? '') as String;
+        // Prebuilt files use the cache field names, the live api its own
+        final wr = (row['ever_drawn_win_rate'] ?? row['gihwr']) as num?;
+        if (name.isNotEmpty && wr != null) out[name] = wr.toDouble();
+      }
+      return out;
+    } catch (_) {
+      return const {};
+    }
   }
 
   static Uri _expansionsUrl() {

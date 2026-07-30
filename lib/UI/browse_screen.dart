@@ -133,6 +133,8 @@ class _BrowseViewState extends State<_BrowseView> {
 
   // All filter rows can be collapsed to leave more room for cards
   bool _showFilters = true;
+  // Cards dragged to another cost column, keyed by card name
+  final Map<String, int> _costOverride = {};
   // Deck being built from the browsed cards
   final List<CardRating> _deck = [];
   final List<CardRating> _side = [];
@@ -144,6 +146,7 @@ class _BrowseViewState extends State<_BrowseView> {
   double _cardSize = 240;
   double _zoomSize = 350;
   bool _zoomEnabled = true;
+  // 320 is the narrowest the rank columns and a card name fit in
   double _rankWidth = 420;
 
   @override
@@ -273,7 +276,6 @@ class _BrowseViewState extends State<_BrowseView> {
                           onChanged: (_) => _onSearchChanged(state.cards),
                         ),
                       ),
-                      const SizedBox(width: 12),
                       for (final c in ['W', 'U', 'B', 'R', 'G', 'C'])
                         Padding(
                           padding: const EdgeInsets.only(right: 4),
@@ -350,7 +352,6 @@ class _BrowseViewState extends State<_BrowseView> {
                             }),
                           ),
                         ),
-                      const SizedBox(width: 12),
                       Text(
                         'Rarity',
                         style: Theme.of(context).textTheme.labelLarge,
@@ -369,7 +370,6 @@ class _BrowseViewState extends State<_BrowseView> {
                             }),
                           ),
                         ),
-                      const SizedBox(width: 12),
                       Text(
                         _minGih == 0
                             ? 'Min GIH: off'
@@ -522,8 +522,10 @@ class _BrowseViewState extends State<_BrowseView> {
       cursor: SystemMouseCursors.resizeColumn,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTap: () =>
+            setState(() => _rankWidth = snapTo(_rankWidth, 320.0, 700.0)),
         onHorizontalDragUpdate: (d) => setState(() {
-          _rankWidth = (_rankWidth - d.delta.dx).clamp(260.0, 700.0);
+          _rankWidth = (_rankWidth - d.delta.dx).clamp(320.0, 700.0);
         }),
         child: SizedBox(
           // Wide grab area, the visible bar stays thin
@@ -819,6 +821,13 @@ class _BrowseViewState extends State<_BrowseView> {
       cursor: SystemMouseCursors.resizeRow,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTap: () => setState(
+          () => _bottomHeight = snapTo(
+            _bottomHeight,
+            0.0,
+            MediaQuery.of(context).size.height,
+          ),
+        ),
         onVerticalDragUpdate: (d) => setState(() {
           _bottomHeight = (_bottomHeight - d.delta.dy).clamp(
             0.0,
@@ -849,6 +858,7 @@ class _BrowseViewState extends State<_BrowseView> {
       cursor: SystemMouseCursors.resizeColumn,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _sideSplit = snapTo(_sideSplit, 0.2, 0.9)),
         onHorizontalDragUpdate: (d) => setState(() {
           _sideSplit = (_sideSplit + d.delta.dx / totalWidth).clamp(0.2, 0.9);
         }),
@@ -876,6 +886,7 @@ class _BrowseViewState extends State<_BrowseView> {
       cursor: SystemMouseCursors.resizeRow,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _deckSplit = snapTo(_deckSplit, 0.2, 0.85)),
         onVerticalDragUpdate: (d) => setState(() {
           _deckSplit = (_deckSplit + d.delta.dy / totalHeight).clamp(0.2, 0.85);
         }),
@@ -916,7 +927,7 @@ class _BrowseViewState extends State<_BrowseView> {
       for (final c in costs)
         _sortedPool(
           cards
-              .where((x) => !x.isLand && !x.isCreature && x.costBucket == c)
+              .where((x) => !x.isLand && !x.isCreature && _bucketOf(x) == c)
               .toList(),
         ),
     ];
@@ -924,7 +935,7 @@ class _BrowseViewState extends State<_BrowseView> {
       for (final c in costs)
         _sortedPool(
           cards
-              .where((x) => !x.isLand && x.isCreature && x.costBucket == c)
+              .where((x) => !x.isLand && x.isCreature && _bucketOf(x) == c)
               .toList(),
         ),
     ];
@@ -942,9 +953,12 @@ class _BrowseViewState extends State<_BrowseView> {
     final nonLands = cards.where((c) => !c.isLand).toList();
     final avgCost = nonLands.isEmpty
         ? null
-        : nonLands.fold(0, (s, c) => s + c.cmc) / nonLands.length;
+        : nonLands.fold(0.0, (s, c) => s + _costOf(c)) / nonLands.length;
     return LayoutBuilder(
       builder: (context, box) {
+        // Dragged almost shut, nothing sensible fits, so draw nothing
+        if (box.maxHeight < 40) return const SizedBox.shrink();
+        final showHeader = showTargets && box.maxHeight >= 90;
         final w = _fitCardWidth(box, maxTop, maxBottom, showTargets);
         final offset = w * 0.15;
         final cardH = w * 1.4;
@@ -976,68 +990,77 @@ class _BrowseViewState extends State<_BrowseView> {
             ),
             for (final c in costs)
               Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (topH > 0)
-                      SizedBox(
-                        height: topH,
-                        child: Align(
-                          alignment: Alignment.bottomCenter,
-                          child: _cardStack(
-                            spellRows[c],
-                            w,
-                            offset,
-                            onTap,
-                            onSecondary,
+                // Dropping a card here counts it as this cost from now on
+                child: DragTarget<CardRating>(
+                  onAcceptWithDetails: (d) =>
+                      setState(() => _costOverride[d.data.name] = c),
+                  builder: (context, candidate, rejected) => Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (topH > 0)
+                        SizedBox(
+                          height: topH,
+                          child: Align(
+                            alignment: Alignment.bottomCenter,
+                            child: _cardStack(
+                              spellRows[c],
+                              w,
+                              offset,
+                              onTap,
+                              onSecondary,
+                              draggable: showTargets,
+                            ),
                           ),
                         ),
-                      ),
-                    if (showTargets && topH > 0)
-                      _rowCount(spellRows[c].length, _spellRange(c)),
-                    if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
-                    if (bottomH > 0)
-                      SizedBox(
-                        height: bottomH,
-                        child: Align(
-                          alignment: Alignment.bottomCenter,
-                          child: _cardStack(
-                            creatureRows[c],
-                            w,
-                            offset,
-                            onTap,
-                            onSecondary,
+                      if (showTargets && topH > 0)
+                        _rowCount(spellRows[c].length, _spellRange(c)),
+                      if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
+                      if (bottomH > 0)
+                        SizedBox(
+                          height: bottomH,
+                          child: Align(
+                            alignment: Alignment.bottomCenter,
+                            child: _cardStack(
+                              creatureRows[c],
+                              w,
+                              offset,
+                              onTap,
+                              onSecondary,
+                              draggable: showTargets,
+                            ),
                           ),
                         ),
-                      ),
-                    if (showTargets && bottomH > 0)
-                      _rowCount(creatureRows[c].length, _creatureRange(c)),
-                    Text(c == 6 ? '6+' : '$c'),
-                  ],
+                      if (showTargets && bottomH > 0)
+                        _rowCount(creatureRows[c].length, _creatureRange(c)),
+                      Text(c == 6 ? '6+' : '$c'),
+                    ],
+                  ),
                 ),
               ),
           ],
         );
+        // No room for the totals, so just the cards
+        if (!showHeader) return SingleChildScrollView(child: grid);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
-              // Sideboard keeps an equally tall header so both curves line up
+              // Sideboard keeps an equally tall header so both curves line up.
+              // It wraps onto more lines when the half is too narrow for one.
               child: showTargets
-                  ? Row(
+                  ? Wrap(
+                      spacing: 12,
+                      runSpacing: 2,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Text(
                           'Deck ${cards.length}',
                           style: const TextStyle(fontSize: 12),
                         ),
-                        const SizedBox(width: 12),
                         _totalLabel('Creatures', creatures, (14, 17)),
-                        const SizedBox(width: 12),
                         _totalLabel('Noncreatures', spells, (6, 9)),
-                        const SizedBox(width: 12),
                         _avgCostLabel(avgCost),
-                        if (onAddLand != null) const SizedBox(width: 12),
                         if (onAddLand != null) _basicLandBar(lands, onAddLand),
                       ],
                     )
@@ -1053,6 +1076,12 @@ class _BrowseViewState extends State<_BrowseView> {
     );
   }
 
+  // Cost the deck should count this card as, after any manual move
+  int _bucketOf(CardRating card) => _costOverride[card.name] ?? card.costBucket;
+
+  double _costOf(CardRating card) =>
+      (_costOverride[card.name] ?? card.cmc).toDouble();
+
   // Largest card width that keeps all eight columns and both rows in view
   double _fitCardWidth(
     BoxConstraints box,
@@ -1062,7 +1091,8 @@ class _BrowseViewState extends State<_BrowseView> {
   ) {
     const columns = 8;
     final byWidth = (box.maxWidth - 8) / columns;
-    final labels = showTargets ? 82.0 : 30.0;
+    // Room for the two row counts, the cost label and a wrapped header
+    final labels = showTargets ? 96.0 : 30.0;
     final rows =
         (maxTop == 0 ? 0.0 : 1.4 + 0.15 * (maxTop - 1)) +
         (maxBottom == 0 ? 0.0 : 1.4 + 0.15 * (maxBottom - 1));
@@ -1077,8 +1107,9 @@ class _BrowseViewState extends State<_BrowseView> {
     double w,
     double offset,
     void Function(CardRating) onTap,
-    void Function(CardRating) onSecondary,
-  ) {
+    void Function(CardRating) onSecondary, {
+    bool draggable = false,
+  }) {
     if (cards.isEmpty) return SizedBox(width: w);
     final h = w * 1.4 + (cards.length - 1) * offset;
     return SizedBox(
@@ -1089,22 +1120,52 @@ class _BrowseViewState extends State<_BrowseView> {
           for (var i = 0; i < cards.length; i++)
             Positioned(
               top: i * offset,
-              child: HoverZoom(
-                card: cards[i],
-                zoomWidth: _zoomSize,
-                enabled: _zoomEnabled,
-                child: CardGestures(
-                  onTap: () => onTap(cards[i]),
-                  onSecondary: () => onSecondary(cards[i]),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: cardImage(cards[i], width: w, decodeWidth: w),
+              child: _maybeDraggable(
+                cards[i],
+                w,
+                draggable,
+                HoverZoom(
+                  card: cards[i],
+                  zoomWidth: _zoomSize,
+                  enabled: _zoomEnabled,
+                  child: CardGestures(
+                    onTap: () => onTap(cards[i]),
+                    onSecondary: () => onSecondary(cards[i]),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: cardImage(cards[i], width: w, decodeWidth: w),
+                    ),
                   ),
                 ),
               ),
             ),
         ],
       ),
+    );
+  }
+
+  // Cards can be dragged sideways onto another cost column, which overrides the
+  // cost used for the curve and the average. Horizontal only, so the area still
+  // scrolls vertically with a finger.
+  Widget _maybeDraggable(
+    CardRating card,
+    double w,
+    bool enabled,
+    Widget child,
+  ) {
+    if (!enabled) return child;
+    return Draggable<CardRating>(
+      data: card,
+      affinity: Axis.horizontal,
+      feedback: Opacity(
+        opacity: 0.85,
+        child: SizedBox(
+          width: w,
+          child: cardImage(card, width: w, decodeWidth: w),
+        ),
+      ),
+      childWhenDragging: Opacity(opacity: 0.3, child: child),
+      child: child,
     );
   }
 

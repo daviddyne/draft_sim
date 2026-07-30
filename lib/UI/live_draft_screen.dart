@@ -291,6 +291,7 @@ class _LiveViewState extends State<_LiveView> {
       cursor: SystemMouseCursors.resizeRow,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _sideSplit = snapTo(_sideSplit, 0.2, 0.85)),
         onVerticalDragUpdate: (d) => setState(() {
           _sideSplit = (_sideSplit + d.delta.dy / totalHeight).clamp(0.2, 0.85);
         }),
@@ -512,6 +513,7 @@ class _LiveViewState extends State<_LiveView> {
       cursor: SystemMouseCursors.resizeColumn,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _doneSplit = snapTo(_doneSplit, 0.2, 0.85)),
         onHorizontalDragUpdate: (d) => setState(() {
           _doneSplit = (_doneSplit + d.delta.dx / totalWidth).clamp(0.2, 0.85);
         }),
@@ -577,6 +579,9 @@ class _LiveViewState extends State<_LiveView> {
         : nonLands.fold(0, (s, c) => s + c.cmc) / nonLands.length;
     return LayoutBuilder(
       builder: (context, box) {
+        // Dragged almost shut, nothing sensible fits, so draw nothing
+        if (box.maxHeight < 40) return const SizedBox.shrink();
+        final showHeader = showTargets && box.maxHeight >= 90;
         final w = _fitCardWidth(box, maxTop, maxBottom, showTargets);
         final offset = w * 0.15;
         final cardH = w * 1.4;
@@ -638,24 +643,27 @@ class _LiveViewState extends State<_LiveView> {
               ),
           ],
         );
+        // No room for the totals, so just the cards
+        if (!showHeader) return SingleChildScrollView(child: grid);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
-              // Sideboard keeps an equally tall header so both curves line up
+              // Sideboard keeps an equally tall header so both curves line up.
+              // It wraps onto more lines when the half is too narrow for one.
               child: showTargets
-                  ? Row(
+                  ? Wrap(
+                      spacing: 12,
+                      runSpacing: 2,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
                         Text(
                           'Picked ${cards.length}',
                           style: const TextStyle(fontSize: 12),
                         ),
-                        const SizedBox(width: 12),
                         _totalLabel('Creatures', totalCreatures, (14, 17)),
-                        const SizedBox(width: 12),
                         _totalLabel('Noncreatures', totalSpells, (6, 9)),
-                        const SizedBox(width: 12),
                         _avgCostLabel(avgCost),
                       ],
                     )
@@ -680,7 +688,8 @@ class _LiveViewState extends State<_LiveView> {
   ) {
     const columns = 8;
     final byWidth = (box.maxWidth - 8) / columns;
-    final labels = showTargets ? 82.0 : 30.0;
+    // Room for the two row counts, the cost label and a wrapped header
+    final labels = showTargets ? 96.0 : 30.0;
     final rows =
         (maxTop == 0 ? 0.0 : 1.4 + 0.15 * (maxTop - 1)) +
         (maxBottom == 0 ? 0.0 : 1.4 + 0.15 * (maxBottom - 1));
@@ -819,8 +828,10 @@ class _LiveViewState extends State<_LiveView> {
       cursor: SystemMouseCursors.resizeColumn,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTap: () =>
+            setState(() => _rankWidth = snapTo(_rankWidth, 300.0, 700.0)),
         onHorizontalDragUpdate: (d) => setState(() {
-          _rankWidth = (_rankWidth - d.delta.dx).clamp(260.0, 700.0);
+          _rankWidth = (_rankWidth - d.delta.dx).clamp(300.0, 700.0);
         }),
         child: SizedBox(
           // Wide grab area, the visible bar stays thin
@@ -846,6 +857,8 @@ class _LiveViewState extends State<_LiveView> {
       cursor: SystemMouseCursors.resizeRow,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTap: () =>
+            setState(() => _rankSplit = snapTo(_rankSplit, 0.15, 0.85)),
         onVerticalDragUpdate: (d) => setState(() {
           _rankSplit = (_rankSplit + d.delta.dy / totalHeight).clamp(
             0.15,

@@ -54,6 +54,12 @@ Widget cardImage(CardRating card, {double? width, BoxFit? fit, double? decodeWid
   );
 }
 
+// Tapping a splitter throws it to whichever end is further away, so one tap
+// collapses a panel and the next brings it back. From the middle it collapses.
+double snapTo(double value, double min, double max) {
+  return value > (min + max) / 2 ? min : max;
+}
+
 // Size for one side of a splitter, safe when the area is too small for both.
 // clamp throws if the lower bound ends up above the upper one, which happens
 // during layout passes where the height is still zero.
@@ -401,6 +407,8 @@ class _DraftViewState extends State<_DraftView> {
   double _poolHeight = 320;
   // Width of the ranking panel, adjusted by dragging the vertical splitter
   double _rankWidth = 420;
+  // Cards dragged to another cost column, keyed by card name
+  final Map<String, int> _costOverride = {};
   // Vertical split between the pack table and the picks table
   double _rankSplit = 0.6;
 
@@ -432,6 +440,29 @@ class _DraftViewState extends State<_DraftView> {
                 builder: (_) => BrowseScreen(setCode: code, eventType: _eventType),
               ));
             },
+          ),
+          BlocBuilder<DraftCubit, DraftState>(
+            builder: (context, state) => Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: state.pair.isEmpty ? 'Show ratings for a color pair' : 'Hide pair ratings',
+                  icon: Icon(Icons.palette_outlined,
+                      color: state.pair.isEmpty ? Theme.of(context).disabledColor : null),
+                  onPressed: () => context.read<DraftCubit>().togglePair(),
+                ),
+                if (state.pair.isNotEmpty)
+                  DropdownButton<String>(
+                    value: state.pair,
+                    underline: const SizedBox.shrink(),
+                    items: [
+                      for (final p in DraftCubit.pairs)
+                        DropdownMenuItem(value: p, child: _pairDots(p, size: 12)),
+                    ],
+                    onChanged: (v) => v == null ? null : context.read<DraftCubit>().setPair(v),
+                  ),
+              ],
+            ),
           ),
           IconButton(
             tooltip: 'Abandon draft and pick another set',
@@ -529,6 +560,7 @@ class _DraftViewState extends State<_DraftView> {
       cursor: SystemMouseCursors.resizeRow,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _rankSplit = snapTo(_rankSplit, 0.15, 0.85)),
         onVerticalDragUpdate: (d) => setState(() {
           _rankSplit = (_rankSplit + d.delta.dy / totalHeight).clamp(0.15, 0.85);
         }),
@@ -556,8 +588,9 @@ class _DraftViewState extends State<_DraftView> {
       cursor: SystemMouseCursors.resizeColumn,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _rankWidth = snapTo(_rankWidth, 300.0, 700.0)),
         onHorizontalDragUpdate: (d) => setState(() {
-          _rankWidth = (_rankWidth - d.delta.dx).clamp(260.0, 700.0);
+          _rankWidth = (_rankWidth - d.delta.dx).clamp(300.0, 700.0);
         }),
         child: SizedBox(
           // Wide grab area, the visible bar stays thin
@@ -583,6 +616,7 @@ class _DraftViewState extends State<_DraftView> {
       cursor: SystemMouseCursors.resizeRow,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _poolHeight = snapTo(_poolHeight, 0.0, MediaQuery.of(context).size.height)),
         onVerticalDragUpdate: (d) => setState(() {
           _poolHeight = (_poolHeight - d.delta.dy).clamp(0.0, MediaQuery.of(context).size.height);
         }),
@@ -822,8 +856,74 @@ class _DraftViewState extends State<_DraftView> {
     );
   }
 
+  // Two mana dots standing in for the pair, no letters to read
+  Widget _pairDots(String pair, {double size = 10}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final letter in pair.split(''))
+          Container(
+            width: size,
+            height: size,
+            margin: const EdgeInsets.only(right: 2),
+            decoration: BoxDecoration(color: _manaColor(letter), shape: BoxShape.circle),
+          ),
+      ],
+    );
+  }
+
+  // Win rate within a pair, boxed in that pair's colors
+  // faded marks an alternative pair rather than the chosen one
+  Widget _pairBadge(String pair, double? wr, {bool faded = false}) {
+    if (pair.isEmpty) return const SizedBox.shrink();
+    final alpha = faded ? 0.2 : 0.4;
+    return Container(
+      margin: const EdgeInsets.only(top: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(3),
+        border: Border.all(color: _manaColor(pair[1]).withValues(alpha: 0.9)),
+        gradient: LinearGradient(colors: [
+          _manaColor(pair[0]).withValues(alpha: alpha),
+          _manaColor(pair[1]).withValues(alpha: alpha),
+        ]),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _pairDots(pair, size: 7),
+          Text(
+            wr == null ? '-' : '${(wr * 100).toStringAsFixed(1)}%',
+            style: const TextStyle(fontSize: 10),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // The pair where this card is best, when that beats both the chosen pair and
+  // its overall rating. Nothing to sort by, it's just worth knowing.
+  (String, double)? _betterPair(DraftState state, CardRating card) {
+    if (state.allPairRatings.isEmpty) return null;
+    final current = state.pairRatings[card.name] ?? card.gihwr ?? 0;
+    final overall = card.gihwr ?? 0;
+    final floor = current > overall ? current : overall;
+    String? bestPair;
+    var bestWr = floor;
+    for (final entry in state.allPairRatings.entries) {
+      if (entry.key == state.pair) continue;
+      final wr = entry.value[card.name];
+      if (wr != null && wr > bestWr) {
+        bestWr = wr;
+        bestPair = entry.key;
+      }
+    }
+    return bestPair == null ? null : (bestPair, bestWr);
+  }
+
   Widget _rankRow(BuildContext context, int rank, CardRating card, {required bool pickable}) {
     final stats = Theme.of(context).textTheme.bodySmall;
+    final state = context.read<DraftCubit>().state;
     return HoverZoom(
       card: card,
       rightInset: _rankWidth + 8,
@@ -839,7 +939,20 @@ class _DraftViewState extends State<_DraftView> {
             children: [
               SizedBox(width: 22, child: Text('$rank', style: stats)),
               Expanded(child: Text(card.name, overflow: TextOverflow.ellipsis)),
-              SizedBox(width: 62, child: Text(card.gihwrLabel, style: stats, textAlign: TextAlign.right)),
+              SizedBox(
+                width: 62,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    // Chosen pair on top, it's what the list is sorted by
+                    if (state.pair.isNotEmpty) _pairBadge(state.pair, state.pairRatings[card.name]),
+                    Text(card.gihwrLabel, style: stats),
+                    if (state.pair.isNotEmpty)
+                      if (_betterPair(state, card) case final better?)
+                        _pairBadge(better.$1, better.$2, faded: true),
+                  ],
+                ),
+              ),
               SizedBox(width: 62, child: Text(card.iwdLabel, style: stats, textAlign: TextAlign.right)),
               SizedBox(width: 62, child: Text(card.alsaLabel, style: stats, textAlign: TextAlign.right)),
             ],
@@ -933,17 +1046,20 @@ class _DraftViewState extends State<_DraftView> {
     if (cards.isEmpty) return Center(child: Text(emptyText));
     final lands = _sortedPool(cards.where((c) => c.isLand).toList());
     final costs = List.generate(7, (i) => i);
-    final spellRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && !x.isCreature && x.costBucket == c).toList())];
-    final creatureRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && x.isCreature && x.costBucket == c).toList())];
+    final spellRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && !x.isCreature && _bucketOf(x) == c).toList())];
+    final creatureRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && x.isCreature && _bucketOf(x) == c).toList())];
     int maxLen(List<List<CardRating>> rows) => rows.fold(0, (m, r) => r.length > m ? r.length : m);
     final maxTop = maxLen(spellRows);
     final maxBottom = maxLen([creatureRows, [lands]].expand((e) => e).toList());
     final totalCreatures = creatureRows.fold(0, (s, r) => s + r.length);
     final totalSpells = spellRows.fold(0, (s, r) => s + r.length);
     final nonLands = cards.where((c) => !c.isLand).toList();
-    final avgCost = nonLands.isEmpty ? null : nonLands.fold(0, (s, c) => s + c.cmc) / nonLands.length;
+    final avgCost = nonLands.isEmpty ? null : nonLands.fold(0.0, (s, c) => s + _costOf(c)) / nonLands.length;
     return LayoutBuilder(
       builder: (context, box) {
+        // Dragged almost shut, nothing sensible fits, so draw nothing
+        if (box.maxHeight < 40) return const SizedBox.shrink();
+        final showHeader = showTargets && box.maxHeight >= 90;
         final w = _fitCardWidth(box, maxTop, maxBottom, showTargets);
         final offset = w * 0.15;
         final cardH = w * 1.4;
@@ -968,48 +1084,54 @@ class _DraftViewState extends State<_DraftView> {
             ),
             for (final c in costs)
               Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                // Dropping a card here counts it as this cost from now on
+                child: DragTarget<CardRating>(
+                  onAcceptWithDetails: (d) => setState(() => _costOverride[d.data.name] = c),
+                  builder: (context, candidate, rejected) => Column(
+                    mainAxisSize: MainAxisSize.min,
                   children: [
                     if (topH > 0)
                       SizedBox(
                         height: topH,
-                        child: Align(alignment: Alignment.bottomCenter, child: _cardStack(spellRows[c], w, offset, onSecondary)),
+                        child: Align(alignment: Alignment.bottomCenter, child: _cardStack(spellRows[c], w, offset, onSecondary, draggable: showTargets)),
                       ),
                     if (showTargets && topH > 0) _rowCount(spellRows[c].length, _spellRange(c)),
                     if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
                     if (bottomH > 0)
                       SizedBox(
                         height: bottomH,
-                        child: Align(alignment: Alignment.bottomCenter, child: _cardStack(creatureRows[c], w, offset, onSecondary)),
+                        child: Align(alignment: Alignment.bottomCenter, child: _cardStack(creatureRows[c], w, offset, onSecondary, draggable: showTargets)),
                       ),
                     if (showTargets && bottomH > 0) _rowCount(creatureRows[c].length, _creatureRange(c)),
                     Text(c == 6 ? '6+' : '$c'),
-                  ],
+                    ],
+                  ),
                 ),
               ),
           ],
         );
+        // No room for the totals, so just the cards
+        if (!showHeader) return SingleChildScrollView(child: grid);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 2, 8, 0),
-              // Sideboard keeps an equally tall header so both curves line up
+              // Sideboard keeps an equally tall header so both curves line up.
+              // It wraps onto more lines when the half is too narrow for one.
               child: showTargets
-                  ? Row(
-                children: [
-                  Text('Picked ${cards.length}', style: const TextStyle(fontSize: 12)),
-                  const SizedBox(width: 12),
-                  _totalLabel('Creatures', totalCreatures, (14, 17)),
-                  const SizedBox(width: 12),
-                  _totalLabel('Noncreatures', totalSpells, (6, 9)),
-                  const SizedBox(width: 12),
-                  _avgCostLabel(avgCost),
-                  if (onAddLand != null) const SizedBox(width: 12),
-                  if (onAddLand != null) _basicLandBar(lands, onAddLand),
-                ],
-              )
+                  ? Wrap(
+                      spacing: 12,
+                      runSpacing: 2,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text('Picked ${cards.length}', style: const TextStyle(fontSize: 12)),
+                        _totalLabel('Creatures', totalCreatures, (14, 17)),
+                        _totalLabel('Noncreatures', totalSpells, (6, 9)),
+                        _avgCostLabel(avgCost),
+                        if (onAddLand != null) _basicLandBar(lands, onAddLand),
+                      ],
+                    )
                   : Text('Sideboard ${cards.length}', style: const TextStyle(fontSize: 12)),
             ),
             Expanded(child: SingleChildScrollView(child: grid)),
@@ -1019,11 +1141,17 @@ class _DraftViewState extends State<_DraftView> {
     );
   }
 
+  // Cost the deck should count this card as, after any manual move
+  int _bucketOf(CardRating card) => _costOverride[card.name] ?? card.costBucket;
+
+  double _costOf(CardRating card) => (_costOverride[card.name] ?? card.cmc).toDouble();
+
   // Largest card width that keeps all eight columns and both rows in view
   double _fitCardWidth(BoxConstraints box, int maxTop, int maxBottom, bool showTargets) {
     const columns = 8;
     final byWidth = (box.maxWidth - 8) / columns;
-    final labels = showTargets ? 82.0 : 30.0;
+    // Room for the two row counts, the cost label and a wrapped header
+    final labels = showTargets ? 96.0 : 30.0;
     final rows = (maxTop == 0 ? 0.0 : 1.4 + 0.15 * (maxTop - 1)) +
         (maxBottom == 0 ? 0.0 : 1.4 + 0.15 * (maxBottom - 1));
     final byHeight = rows <= 0 ? byWidth : (box.maxHeight - labels) / rows;
@@ -1112,7 +1240,8 @@ class _DraftViewState extends State<_DraftView> {
   }
 
   // Cards stacked with their title bars visible, right click moves the card
-  Widget _cardStack(List<CardRating> cards, double w, double offset, void Function(CardRating) onSecondary) {
+  Widget _cardStack(List<CardRating> cards, double w, double offset, void Function(CardRating) onSecondary,
+      {bool draggable = false}) {
     if (cards.isEmpty) return SizedBox(width: w);
     final h = w * 1.4 + (cards.length - 1) * offset;
     return SizedBox(
@@ -1123,7 +1252,11 @@ class _DraftViewState extends State<_DraftView> {
           for (var i = 0; i < cards.length; i++)
             Positioned(
               top: i * offset,
-              child: HoverZoom(
+              child: _maybeDraggable(
+                cards[i],
+                w,
+                draggable,
+                HoverZoom(
                 card: cards[i],
                 zoomWidth: _zoomSize,
                 enabled: _zoomEnabled,
@@ -1134,12 +1267,31 @@ class _DraftViewState extends State<_DraftView> {
                     child: cardImage(cards[i], width: w, decodeWidth: w),
                   ),
                 ),
+                ),
               ),
             ),
         ],
       ),
     );
   }
+
+  // Cards can be dragged sideways onto another cost column, which overrides the
+  // cost used for the curve and the average. Horizontal only, so the area still
+  // scrolls vertically with a finger.
+  Widget _maybeDraggable(CardRating card, double w, bool enabled, Widget child) {
+    if (!enabled) return child;
+    return Draggable<CardRating>(
+      data: card,
+      affinity: Axis.horizontal,
+      feedback: Opacity(
+        opacity: 0.85,
+        child: SizedBox(width: w, child: cardImage(card, width: w, decodeWidth: w)),
+      ),
+      childWhenDragging: Opacity(opacity: 0.3, child: child),
+      child: child,
+    );
+  }
+
 
   // Drafting is over, so the deck and sideboard get the whole screen
   Widget _buildFinished(DraftState state) {
@@ -1169,10 +1321,14 @@ class _DraftViewState extends State<_DraftView> {
 
 
   List<CardRating> _ranked(List<CardRating> cards) {
+    final state = context.read<DraftCubit>().state;
+    // With a pair selected its win rates drive the order, that's the point of it
+    final pairOn = state.pair.isNotEmpty && state.pairRatings.isNotEmpty;
+    double gih(CardRating c) => pairOn ? (state.pairRatings[c.name] ?? -1) : (c.gihwr ?? -1);
     final sorted = List<CardRating>.from(cards);
     // Missing stats (low sample size) always sort to the bottom
     sorted.sort((a, b) => switch (_rankStat) {
-      RankStat.gihwr => (b.gihwr ?? -1).compareTo(a.gihwr ?? -1),
+      RankStat.gihwr => gih(b).compareTo(gih(a)),
       RankStat.iwd => (b.iwd ?? -9).compareTo(a.iwd ?? -9),
       RankStat.alsa => (a.alsa ?? 99).compareTo(b.alsa ?? 99),
     });
