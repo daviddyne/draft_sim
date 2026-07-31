@@ -411,6 +411,9 @@ class _DraftViewState extends State<_DraftView> {
   double _rankWidth = 420;
   // Cards dragged to another cost column, keyed by card name
   final Map<String, int> _costOverride = {};
+  // Cards moved between the creature and noncreature rows, e.g. a sorcery that
+  // makes a creature can be counted as one
+  final Map<String, bool> _typeOverride = {};
   // The overall ranking can be hidden to leave the pair ranking alone
   bool _showSolo = true;
   // The pair table has its own width, so its splitter leaves the first table alone
@@ -1290,8 +1293,8 @@ class _DraftViewState extends State<_DraftView> {
     if (cards.isEmpty) return Center(child: Text(emptyText));
     final lands = _sortedPool(cards.where((c) => c.isLand).toList());
     final costs = List.generate(7, (i) => i);
-    final spellRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && !x.isCreature && _bucketOf(x) == c).toList())];
-    final creatureRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && x.isCreature && _bucketOf(x) == c).toList())];
+    final spellRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && !_isCreature(x) && _bucketOf(x) == c).toList())];
+    final creatureRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && _isCreature(x) && _bucketOf(x) == c).toList())];
     int maxLen(List<List<CardRating>> rows) => rows.fold(0, (m, r) => r.length > m ? r.length : m);
     final maxTop = maxLen(spellRows);
     final maxBottom = maxLen([creatureRows, [lands]].expand((e) => e).toList());
@@ -1328,28 +1331,34 @@ class _DraftViewState extends State<_DraftView> {
             ),
             for (final c in costs)
               Expanded(
-                // Dropping a card here counts it as this cost from now on
-                child: DragTarget<CardRating>(
-                  onAcceptWithDetails: (d) => setState(() => _costOverride[d.data.name] = c),
-                  builder: (context, candidate, rejected) => Column(
-                    mainAxisSize: MainAxisSize.min,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
+                    // Dropping a card in a row sets both its cost and its type
                     if (topH > 0)
-                      SizedBox(
-                        height: topH,
-                        child: Align(alignment: Alignment.bottomCenter, child: _cardStack(spellRows[c], w, offset, onSecondary, draggable: showTargets)),
+                      _costTarget(
+                        c,
+                        false,
+                        SizedBox(
+                          height: topH,
+                          child: Align(alignment: Alignment.bottomCenter, child: _cardStack(spellRows[c], w, offset, onSecondary, draggable: showTargets)),
+                        ),
                       ),
-                    if (showTargets && topH > 0) _rowCount(spellRows[c].length, _spellRange(c)),
+                    if (showTargets && topH > 0)
+                      _rowCount(spellRows[c].length + creatureRows[c].length, _combinedRange(c)),
                     if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
                     if (bottomH > 0)
-                      SizedBox(
-                        height: bottomH,
-                        child: Align(alignment: Alignment.bottomCenter, child: _cardStack(creatureRows[c], w, offset, onSecondary, draggable: showTargets)),
+                      _costTarget(
+                        c,
+                        true,
+                        SizedBox(
+                          height: bottomH,
+                          child: Align(alignment: Alignment.bottomCenter, child: _cardStack(creatureRows[c], w, offset, onSecondary, draggable: showTargets)),
+                        ),
                       ),
                     if (showTargets && bottomH > 0) _rowCount(creatureRows[c].length, _creatureRange(c)),
                     Text(c == 6 ? '6+' : '$c'),
-                    ],
-                  ),
+                  ],
                 ),
               ),
           ],
@@ -1388,6 +1397,20 @@ class _DraftViewState extends State<_DraftView> {
   // Cost the deck should count this card as, after any manual move
   int _bucketOf(CardRating card) => _costOverride[card.name] ?? card.costBucket;
 
+  bool _isCreature(CardRating card) => _typeOverride[card.name] ?? card.isCreature;
+
+  // A drop lands in one row of one column, fixing the card's cost and whether
+  // the deck counts it as a creature
+  Widget _costTarget(int cost, bool creature, Widget child) {
+    return DragTarget<CardRating>(
+      onAcceptWithDetails: (d) => setState(() {
+        _costOverride[d.data.name] = cost;
+        _typeOverride[d.data.name] = creature;
+      }),
+      builder: (context, candidate, rejected) => child,
+    );
+  }
+
   double _costOf(CardRating card) => (_costOverride[card.name] ?? card.cmc).toDouble();
 
   // Largest card width that keeps all eight columns and both rows in view
@@ -1417,16 +1440,16 @@ class _DraftViewState extends State<_DraftView> {
     };
   }
 
-  // Noncreatures are fewer and sit lower, removal and tricks mostly
-  (int, int)? _spellRange(int cost) {
+  // Creatures and noncreatures together, the shape of the whole curve
+  (int, int)? _combinedRange(int cost) {
     return switch (cost) {
       0 => null,
       1 => (0, 2),
-      2 => (1, 3),
-      3 => (1, 3),
-      4 => (0, 2),
-      5 => (0, 1),
-      _ => (0, 1),
+      2 => (5, 7),
+      3 => (4, 6),
+      4 => (3, 5),
+      5 => (2, 3),
+      _ => (1, 2),
     };
   }
 

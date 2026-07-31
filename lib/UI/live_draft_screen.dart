@@ -37,6 +37,9 @@ class _LiveViewState extends State<_LiveView> {
   double _rankWidth = 420;
   // Cards dragged to another cost column, keyed by card name
   final Map<String, int> _costOverride = {};
+  // Cards moved between the creature and noncreature rows, e.g. a sorcery that
+  // makes a creature can be counted as one
+  final Map<String, bool> _typeOverride = {};
   // The overall ranking can be hidden to leave the pair ranking alone
   bool _showSolo = true;
   // The pair table has its own width, so its splitter leaves the first table alone
@@ -904,7 +907,7 @@ class _LiveViewState extends State<_LiveView> {
       for (final c in costs)
         _sortedPool(
           cards
-              .where((x) => !x.isLand && !x.isCreature && _bucketOf(x) == c)
+              .where((x) => !x.isLand && !_isCreature(x) && _bucketOf(x) == c)
               .toList(),
         ),
     ];
@@ -912,7 +915,7 @@ class _LiveViewState extends State<_LiveView> {
       for (final c in costs)
         _sortedPool(
           cards
-              .where((x) => !x.isLand && x.isCreature && _bucketOf(x) == c)
+              .where((x) => !x.isLand && _isCreature(x) && _bucketOf(x) == c)
               .toList(),
         ),
     ];
@@ -967,14 +970,14 @@ class _LiveViewState extends State<_LiveView> {
             ),
             for (final c in costs)
               Expanded(
-                // Dropping a card here counts it as this cost from now on
-                child: DragTarget<CardRating>(
-                  onAcceptWithDetails: (d) =>
-                      setState(() => _costOverride[d.data.name] = c),
-                  builder: (context, candidate, rejected) => Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (topH > 0)
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Dropping a card in a row sets both its cost and its type
+                    if (topH > 0)
+                      _costTarget(
+                        c,
+                        false,
                         SizedBox(
                           height: topH,
                           child: Align(
@@ -988,10 +991,17 @@ class _LiveViewState extends State<_LiveView> {
                             ),
                           ),
                         ),
-                      if (showTargets && topH > 0)
-                        _rowCount(spellRows[c].length, _spellRange(c)),
-                      if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
-                      if (bottomH > 0)
+                      ),
+                    if (showTargets && topH > 0)
+                      _rowCount(
+                        spellRows[c].length + creatureRows[c].length,
+                        _combinedRange(c),
+                      ),
+                    if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
+                    if (bottomH > 0)
+                      _costTarget(
+                        c,
+                        true,
                         SizedBox(
                           height: bottomH,
                           child: Align(
@@ -1005,11 +1015,11 @@ class _LiveViewState extends State<_LiveView> {
                             ),
                           ),
                         ),
-                      if (showTargets && bottomH > 0)
-                        _rowCount(creatureRows[c].length, _creatureRange(c)),
-                      Text(c == 6 ? '6+' : '$c'),
-                    ],
-                  ),
+                      ),
+                    if (showTargets && bottomH > 0)
+                      _rowCount(creatureRows[c].length, _creatureRange(c)),
+                    Text(c == 6 ? '6+' : '$c'),
+                  ],
                 ),
               ),
           ],
@@ -1052,6 +1062,21 @@ class _LiveViewState extends State<_LiveView> {
 
   // Cost the deck should count this card as, after any manual move
   int _bucketOf(CardRating card) => _costOverride[card.name] ?? card.costBucket;
+
+  bool _isCreature(CardRating card) =>
+      _typeOverride[card.name] ?? card.isCreature;
+
+  // A drop lands in one row of one column, fixing the card's cost and whether
+  // the deck counts it as a creature
+  Widget _costTarget(int cost, bool creature, Widget child) {
+    return DragTarget<CardRating>(
+      onAcceptWithDetails: (d) => setState(() {
+        _costOverride[d.data.name] = cost;
+        _typeOverride[d.data.name] = creature;
+      }),
+      builder: (context, candidate, rejected) => child,
+    );
+  }
 
   double _costOf(CardRating card) =>
       (_costOverride[card.name] ?? card.cmc).toDouble();
@@ -1156,16 +1181,16 @@ class _LiveViewState extends State<_LiveView> {
     };
   }
 
-  // Noncreatures are fewer and sit lower, removal and tricks mostly
-  (int, int)? _spellRange(int cost) {
+  // Creatures and noncreatures together, the shape of the whole curve
+  (int, int)? _combinedRange(int cost) {
     return switch (cost) {
       0 => null,
       1 => (0, 2),
-      2 => (1, 3),
-      3 => (1, 3),
-      4 => (0, 2),
-      5 => (0, 1),
-      _ => (0, 1),
+      2 => (5, 7),
+      3 => (4, 6),
+      4 => (3, 5),
+      5 => (2, 3),
+      _ => (1, 2),
     };
   }
 
