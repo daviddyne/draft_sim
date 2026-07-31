@@ -6,19 +6,9 @@ import 'package:draft_sim/Services/seventeen_lands_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-
 import 'draft_screen.dart';
 
-const allTypes = [
-  'Creature',
-  'Instant',
-  'Sorcery',
-  'Artifact',
-  'Enchantment',
-  'Planeswalker',
-  'Land',
-  'Battle',
-];
+const allTypes = ['Creature', 'Instant', 'Sorcery', 'Artifact', 'Enchantment', 'Planeswalker', 'Land', 'Battle'];
 const allRarities = [
   ('common', 'Common', Color(0xFF9E9E9E)),
   ('uncommon', 'Uncommon', Color(0xFFB0C4DE)),
@@ -30,17 +20,12 @@ class BrowseScreen extends StatelessWidget {
   final String setCode;
   final String eventType;
 
-  const BrowseScreen({
-    super.key,
-    required this.setCode,
-    required this.eventType,
-  });
+  const BrowseScreen({super.key, required this.setCode, required this.eventType});
 
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
-      create: (_) =>
-          BrowseCubit(SeventeenLandsService())..load(setCode, eventType),
+      create: (_) => BrowseCubit(SeventeenLandsService())..load(setCode, eventType),
       child: _BrowseView(setCode: setCode, eventType: eventType),
     );
   }
@@ -102,10 +87,7 @@ class _BrowseViewState extends State<_BrowseView> {
                           return CheckboxListTile(
                             dense: true,
                             value: on,
-                            title: Text(
-                              '${option.name} (${option.code})',
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                            title: Text('${option.name} (${option.code})', overflow: TextOverflow.ellipsis),
                             onChanged: (_) => cubit.toggleSet(option.code),
                           );
                         },
@@ -121,10 +103,7 @@ class _BrowseViewState extends State<_BrowseView> {
               onPressed: () => cubit.addAll(),
               child: const Text('Add all sets'),
             ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Done'),
-            ),
+            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Done')),
           ],
         ),
       ),
@@ -147,6 +126,10 @@ class _BrowseViewState extends State<_BrowseView> {
   double _zoomSize = 350;
   bool _zoomEnabled = true;
   // 320 is the narrowest the rank columns and a card name fit in
+  // The overall ranking can be hidden to leave the pair ranking alone
+  bool _showSolo = true;
+  // The pair table has its own width, so its splitter leaves the first table alone
+  double _pairWidth = 340;
   double _rankWidth = 420;
 
   @override
@@ -179,6 +162,60 @@ class _BrowseViewState extends State<_BrowseView> {
           ),
         ),
         actions: [
+          BlocBuilder<BrowseCubit, BrowseState>(
+            builder: (context, state) => Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: _showSolo ? 'Hide the overall ranking' : 'Show the overall ranking',
+                  icon: Icon(_showSolo ? Icons.table_rows : Icons.table_rows_outlined,
+                      size: 20, color: _showSolo ? null : Theme.of(context).disabledColor),
+                  onPressed: state.pair.isEmpty ? null : () => setState(() => _showSolo = !_showSolo),
+                ),
+                IconButton(
+                  tooltip: state.pair.isEmpty ? 'Show ratings for a color pair' : 'Hide pair ratings',
+                  icon: Icon(Icons.palette_outlined,
+                      color: state.pair.isEmpty ? Theme.of(context).disabledColor : null),
+                  onPressed: () => context.read<BrowseCubit>().togglePair(_deck),
+                ),
+                if (state.pair.isNotEmpty)
+                  SizedBox(
+                    // Wide enough for the dots and a percentage, so the menu can't overflow
+                    width: 108,
+                    child: DropdownButton<String>(
+                      value: state.pair,
+                      isExpanded: true,
+                      underline: const SizedBox.shrink(),
+                      // Strongest pair first, so the menu doubles as a ranking
+                      selectedItemBuilder: (context) => [
+                        for (final p in _pairsByRating(state))
+                          Align(alignment: Alignment.centerLeft, child: _pairDots(p, size: 12)),
+                      ],
+                      items: [
+                        for (final p in _pairsByRating(state))
+                          DropdownMenuItem(
+                            value: p,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _pairDots(p, size: 12),
+                                const SizedBox(width: 4),
+                                Text(
+                                  state.pairAverages[p] == null
+                                      ? '-'
+                                      : '${(state.pairAverages[p]! * 100).toStringAsFixed(1)}%',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                      onChanged: (v) => v == null ? null : context.read<BrowseCubit>().setPairManually(v),
+                    ),
+                  ),
+              ],
+            ),
+          ),
           IconButton(
             tooltip: 'Choose sets',
             icon: const Icon(Icons.library_add),
@@ -192,14 +229,9 @@ class _BrowseViewState extends State<_BrowseView> {
           IconButton(
             tooltip: 'Draft this set',
             icon: const Icon(Icons.play_circle_outline),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => DraftScreen(
-                  setCode: widget.setCode,
-                  eventType: widget.eventType,
-                ),
-              ),
-            ),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => DraftScreen(setCode: widget.setCode, eventType: widget.eventType),
+            )),
           ),
           const Icon(Icons.photo_size_select_large, size: 18),
           Tooltip(
@@ -240,16 +272,9 @@ class _BrowseViewState extends State<_BrowseView> {
       ),
       body: BlocBuilder<BrowseCubit, BrowseState>(
         builder: (context, state) {
-          if (state.loading) {
-            return const Center(child: CircularProgressIndicator());
-          }
+          if (state.loading) return const Center(child: CircularProgressIndicator());
           if (state.error != null) {
-            return Center(
-              child: Text(
-                state.error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            );
+            return Center(child: Text(state.error!, style: TextStyle(color: Theme.of(context).colorScheme.error)));
           }
           _rebuildDerived(state.cards);
           final filtered = _memoFiltered;
@@ -261,136 +286,119 @@ class _BrowseViewState extends State<_BrowseView> {
             children: [
               if (_showFilters)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _searchController,
-                          decoration: const InputDecoration(
-                            labelText:
-                                'Keyword (name, type or rules text, e.g. goblin)',
-                            isDense: true,
-                            border: OutlineInputBorder(),
-                          ),
-                          onChanged: (_) => _onSearchChanged(state.cards),
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: const InputDecoration(
+                          labelText: 'Keyword (name, type or rules text, e.g. goblin)',
+                          isDense: true,
+                          border: OutlineInputBorder(),
                         ),
+                        onChanged: (_) => _onSearchChanged(state.cards),
                       ),
+                    ),
                       for (final c in ['W', 'U', 'B', 'R', 'G', 'C'])
-                        Padding(
-                          padding: const EdgeInsets.only(right: 4),
-                          child: Opacity(
-                            opacity: availableColors.contains(c) ? 1 : 0.35,
-                            child: FilterChip(
-                              label: Text(c),
-                              selected: _colors.contains(c),
-                              selectedColor: _manaColor(
-                                c,
-                              ).withValues(alpha: 0.5),
-                              onSelected: (on) => setState(() {
-                                // Plain click selects only this color, ctrl click adds or removes
-                                final ctrl =
-                                    HardwareKeyboard.instance.isControlPressed;
-                                if (ctrl) {
-                                  on ? _colors.add(c) : _colors.remove(c);
-                                  if (on) _multicolor = true;
-                                } else {
-                                  final wasOnlyThis =
-                                      _colors.length == 1 &&
-                                      _colors.contains(c);
-                                  _colors.clear();
-                                  if (!wasOnlyThis) {
-                                    _colors.add(c);
-                                    _multicolor = true;
-                                  }
-                                }
-                                if (_colors.isEmpty) _multicolor = false;
-                              }),
-                            ),
-                          ),
-                        ),
                       Padding(
                         padding: const EdgeInsets.only(right: 4),
                         child: Opacity(
-                          opacity: availableColors.contains('Multi') ? 1 : 0.35,
+                          opacity: availableColors.contains(c) ? 1 : 0.35,
                           child: FilterChip(
-                            label: const Text('Multi'),
-                            selected: _multicolor,
-                            selectedColor: const Color(
-                              0xFFD4AF37,
-                            ).withValues(alpha: 0.5),
-                            onSelected: (on) =>
-                                setState(() => _multicolor = on),
+                            label: Text(c),
+                            selected: _colors.contains(c),
+                            selectedColor: _manaColor(c).withValues(alpha: 0.5),
+                            onSelected: (on) => setState(() {
+                              // Plain click selects only this color, ctrl click adds or removes
+                              final ctrl = HardwareKeyboard.instance.isControlPressed;
+                              if (ctrl) {
+                                on ? _colors.add(c) : _colors.remove(c);
+                                if (on) _multicolor = true;
+                              } else {
+                                final wasOnlyThis = _colors.length == 1 && _colors.contains(c);
+                                _colors.clear();
+                                if (!wasOnlyThis) {
+                                  _colors.add(c);
+                                  _multicolor = true;
+                                }
+                              }
+                              if (_colors.isEmpty) _multicolor = false;
+                            }),
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Opacity(
+                        opacity: availableColors.contains('Multi') ? 1 : 0.35,
+                        child: FilterChip(
+                          label: const Text('Multi'),
+                          selected: _multicolor,
+                          selectedColor: const Color(0xFFD4AF37).withValues(alpha: 0.5),
+                          onSelected: (on) => setState(() => _multicolor = on),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
+              ),
               if (_showFilters)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
-                  child: Wrap(
-                    spacing: 4,
-                    runSpacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      Text(
-                        'Type',
-                        style: Theme.of(context).textTheme.labelLarge,
-                      ),
-                      for (final t in allTypes)
-                        Opacity(
-                          opacity: availableTypes.contains(t) ? 1 : 0.35,
-                          child: FilterChip(
-                            label: Text(t),
-                            visualDensity: VisualDensity.compact,
-                            selected: _types.contains(t),
-                            onSelected: (on) => setState(() {
-                              on ? _types.add(t) : _types.remove(t);
-                              _syncColors(state.cards);
-                            }),
-                          ),
-                        ),
-                      Text(
-                        'Rarity',
-                        style: Theme.of(context).textTheme.labelLarge,
-                      ),
-                      for (final (r, label, color) in allRarities)
-                        Opacity(
-                          opacity: availableRarities.contains(r) ? 1 : 0.35,
-                          child: FilterChip(
-                            label: Text(label),
-                            visualDensity: VisualDensity.compact,
-                            selected: _rarities.contains(r),
-                            selectedColor: color.withValues(alpha: 0.5),
-                            onSelected: (on) => setState(() {
-                              on ? _rarities.add(r) : _rarities.remove(r);
-                              _syncColors(state.cards);
-                            }),
-                          ),
-                        ),
-                      Text(
-                        _minGih == 0
-                            ? 'Min GIH: off'
-                            : 'Min GIH: ${_minGih.toStringAsFixed(1)}%',
-                        style: Theme.of(context).textTheme.labelLarge,
-                      ),
-                      SizedBox(
-                        width: 180,
-                        child: Slider(
-                          value: _minGih,
-                          min: 0,
-                          max: 70,
-                          onChanged: (v) => setState(() {
-                            _minGih = v;
+                padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+                child: Wrap(
+                  spacing: 4,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text('Type', style: Theme.of(context).textTheme.labelLarge),
+                    for (final t in allTypes)
+                      Opacity(
+                        opacity: availableTypes.contains(t) ? 1 : 0.35,
+                        child: FilterChip(
+                          label: Text(t),
+                          visualDensity: VisualDensity.compact,
+                          selected: _types.contains(t),
+                          onSelected: (on) => setState(() {
+                            on ? _types.add(t) : _types.remove(t);
                             _syncColors(state.cards);
                           }),
                         ),
                       ),
-                    ],
-                  ),
+                      Text('Rarity', style: Theme.of(context).textTheme.labelLarge),
+                    for (final (r, label, color) in allRarities)
+                      Opacity(
+                        opacity: availableRarities.contains(r) ? 1 : 0.35,
+                        child: FilterChip(
+                          label: Text(label),
+                          visualDensity: VisualDensity.compact,
+                          selected: _rarities.contains(r),
+                          selectedColor: color.withValues(alpha: 0.5),
+                          onSelected: (on) => setState(() {
+                            on ? _rarities.add(r) : _rarities.remove(r);
+                            _syncColors(state.cards);
+                          }),
+                        ),
+                      ),
+                      Text(
+                      _minGih == 0 ? 'Min GIH: off' : 'Min GIH: ${_minGih.toStringAsFixed(1)}%',
+                      style: Theme.of(context).textTheme.labelLarge,
+                    ),
+                    SizedBox(
+                      width: 180,
+                      child: Slider(
+                        value: _minGih,
+                        min: 0,
+                        max: 70,
+                        onChanged: (v) => setState(() {
+                          _minGih = v;
+                          _syncColors(state.cards);
+                        }),
+                      ),
+                    ),
+                  ],
                 ),
+              ),
               _buildSummary(context, filtered),
               const Divider(height: 1),
               Expanded(
@@ -404,13 +412,7 @@ class _BrowseViewState extends State<_BrowseView> {
                           final hasDeck = _deck.isNotEmpty || _side.isNotEmpty;
                           // Can take the whole area, only the drag handle has to stay visible
                           final bottom = hasDeck
-                              ? _bottomHeight.clamp(
-                                  0.0,
-                                  (box.maxHeight - 22).clamp(
-                                    0.0,
-                                    box.maxHeight,
-                                  ),
-                                )
+                              ? _bottomHeight.clamp(0.0, (box.maxHeight - 22).clamp(0.0, box.maxHeight))
                               : 0.0;
                           return Column(
                             children: [
@@ -421,35 +423,25 @@ class _BrowseViewState extends State<_BrowseView> {
                                   height: bottom,
                                   child: LayoutBuilder(
                                     builder: (context, inner) => Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
+                                      crossAxisAlignment: CrossAxisAlignment.stretch,
                                       children: [
                                         SizedBox(
-                                          width: splitSize(
-                                            inner.maxWidth,
-                                            _sideSplit,
-                                          ),
-                                          child: _curve(
-                                            _deck,
-                                            showTargets: true,
-                                            emptyText:
-                                                'Click cards to add them',
-                                            onTap: _fromDeck,
-                                            onSecondary: _deckToSide,
-                                            lands: state.lands,
-                                            onAddLand: (l) =>
-                                                setState(() => _deck.add(l)),
-                                          ),
+                                          width: splitSize(inner.maxWidth, _sideSplit),
+                                          child: _curve(_deck,
+                                              showTargets: true,
+                                              emptyText: 'Click cards to add them',
+                                              onTap: _fromDeck,
+                                              onSecondary: _deckToSide,
+                                              lands: state.lands,
+                                              onAddLand: _addToDeck),
                                         ),
                                         _buildSideSplitter(inner.maxWidth),
                                         Expanded(
-                                          child: _curve(
-                                            _side,
-                                            showTargets: false,
-                                            emptyText: 'Sideboard empty',
-                                            onTap: _fromSide,
-                                            onSecondary: _sideToDeck,
-                                          ),
+                                          child: _curve(_side,
+                                              showTargets: false,
+                                              emptyText: 'Sideboard empty',
+                                              onTap: _fromSide,
+                                              onSecondary: _sideToDeck),
                                         ),
                                       ],
                                     ),
@@ -463,8 +455,8 @@ class _BrowseViewState extends State<_BrowseView> {
                     ),
                     _buildVSplitter(),
                     SizedBox(
-                      width: _rankWidth,
-                      child: _buildRankPanel(filtered),
+                      width: _panelWidth(state),
+                      child: _buildRankPanel(filtered, state),
                     ),
                   ],
                 ),
@@ -497,22 +489,66 @@ class _BrowseViewState extends State<_BrowseView> {
           enabled: _zoomEnabled,
           child: CardGestures(
             // Left click or tap builds the deck, right click or two fingers sideboards
-            onTap: () => setState(() => _deck.add(card)),
-            onSecondary: () => setState(() => _side.add(card)),
+            onTap: () => _addToDeck(card),
+            onSecondary: () => _addToSide(card),
             child: Opacity(
               opacity: excluded ? 0.35 : 1,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
-                child: cardImage(
-                  card,
-                  fit: BoxFit.contain,
-                  decodeWidth: _cardSize,
-                ),
+                child: cardImage(card, fit: BoxFit.contain, decodeWidth: _cardSize),
               ),
             ),
           ),
         );
       },
+    );
+  }
+
+  // Overall ranking beside the pair ranking, either side can be absent
+  Widget _rankPair(BrowseState state, Widget solo, Widget pair) {
+    if (state.pair.isEmpty) return solo;
+    if (!_showSolo) return pair;
+    return LayoutBuilder(
+      builder: (context, row) => Row(
+        children: [
+          SizedBox(
+            width: (row.maxWidth - _pairWidth - 14).clamp(0.0, row.maxWidth),
+            child: solo,
+          ),
+          _buildPairSplitter(),
+          SizedBox(width: _pairWidth, child: pair),
+        ],
+      ),
+    );
+  }
+
+  // How wide the whole panel needs to be for whatever is showing
+  double _panelWidth(BrowseState state) {
+    if (state.pair.isEmpty) return _rankWidth;
+    return _showSolo ? _rankWidth + _pairWidth + 14 : _pairWidth;
+  }
+
+  // Drag to resize the pair table only, the first table keeps its width
+  Widget _buildPairSplitter() {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _pairWidth = snapTo(_pairWidth, 230.0, 700.0)),
+        onHorizontalDragUpdate: (d) => setState(() {
+          _pairWidth = (_pairWidth - d.delta.dx).clamp(230.0, 700.0);
+        }),
+        child: SizedBox(
+          width: 14,
+          child: Center(
+            child: Container(
+              width: 3,
+              height: 60,
+              decoration: BoxDecoration(color: Theme.of(context).dividerColor, borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -522,8 +558,7 @@ class _BrowseViewState extends State<_BrowseView> {
       cursor: SystemMouseCursors.resizeColumn,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: () =>
-            setState(() => _rankWidth = snapTo(_rankWidth, 320.0, 700.0)),
+        onTap: () => setState(() => _rankWidth = snapTo(_rankWidth, 320.0, 700.0)),
         onHorizontalDragUpdate: (d) => setState(() {
           _rankWidth = (_rankWidth - d.delta.dx).clamp(320.0, 700.0);
         }),
@@ -548,23 +583,15 @@ class _BrowseViewState extends State<_BrowseView> {
   // The averages are the whole point: compare goblins vs elves at a glance
   // Excluded cards stay visible but don't count
   Widget _buildSummary(BuildContext context, List<CardRating> cards) {
-    final included = [
-      for (final c in cards)
-        if (!_excluded.contains(c.name)) c,
-    ];
+    final included = [for (final c in cards) if (!_excluded.contains(c.name)) c];
     final gih = _avg(included, (c) => c.gihwr);
     final iwd = _avg(included, (c) => c.iwd);
     final alsa = _avg(included, (c) => c.alsa);
-    String pct(double? v) =>
-        v == null ? '-' : '${(v * 100).toStringAsFixed(1)}%';
-    String pp(double? v) => v == null
-        ? '-'
-        : '${v >= 0 ? '+' : ''}${(v * 100).toStringAsFixed(1)}pp';
+    String pct(double? v) => v == null ? '-' : '${(v * 100).toStringAsFixed(1)}%';
+    String pp(double? v) => v == null ? '-' : '${v >= 0 ? '+' : ''}${(v * 100).toStringAsFixed(1)}pp';
     String num(double? v) => v == null ? '-' : v.toStringAsFixed(2);
     final excludedCount = cards.length - included.length;
-    final suffix = excludedCount > 0
-        ? ' ($excludedCount excluded)'
-        : ' · click a table row to exclude it';
+    final suffix = excludedCount > 0 ? ' ($excludedCount excluded)' : ' · click a table row to exclude it';
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       child: Text(
@@ -580,13 +607,207 @@ class _BrowseViewState extends State<_BrowseView> {
       child: Row(
         children: [
           const SizedBox(width: 30),
-          Expanded(
-            child: Text('Card', style: Theme.of(context).textTheme.labelLarge),
-          ),
+          Expanded(child: Text('Card', style: Theme.of(context).textTheme.labelLarge)),
           _headerCell('GIH', RankStat.gihwr),
           _headerCell('IWD', RankStat.iwd),
           _headerCell('ALSA', RankStat.alsa),
         ],
+      ),
+    );
+  }
+
+  // Pairs ordered by how strong their playables are, unrated ones last
+  List<String> _pairsByRating(BrowseState state) {
+    return [...BrowseCubit.pairs]
+      ..sort((a, b) => (state.pairAverages[b] ?? -1).compareTo(state.pairAverages[a] ?? -1));
+  }
+
+  // Two mana dots standing in for the pair, no letters to read
+  Widget _pairDots(String pair, {double size = 10}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final letter in pair.split(''))
+          Container(
+            width: size,
+            height: size,
+            margin: const EdgeInsets.only(right: 2),
+            decoration: BoxDecoration(color: _manaColor(letter), shape: BoxShape.circle),
+          ),
+      ],
+    );
+  }
+
+  // The chosen pair is plain text, an alternative pair is boxed in its colors
+  Widget _pairBadge(String pair, double? wr, {bool faded = false}) {
+    if (pair.isEmpty) return const SizedBox.shrink();
+    final label = wr == null ? '-' : '${(wr * 100).toStringAsFixed(1)}%';
+    if (!faded) return Text(label, style: const TextStyle(fontSize: 12));
+    const alpha = 0.2;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(3),
+        border: Border.all(color: _manaColor(pair[1]).withValues(alpha: 0.9)),
+        gradient: LinearGradient(colors: [
+          _manaColor(pair[0]).withValues(alpha: alpha),
+          _manaColor(pair[1]).withValues(alpha: alpha),
+        ]),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _pairDots(pair, size: 7),
+          Text(label, style: const TextStyle(fontSize: 10)),
+        ],
+      ),
+    );
+  }
+
+  // The pair this card performs best in, whichever that is
+  (String, double)? _topPair(BrowseState state, CardRating card) {
+    String? bestPair;
+    var bestWr = -1.0;
+    for (final entry in state.allPairRatings.entries) {
+      final wr = entry.value[card.name];
+      if (wr != null && wr > bestWr) {
+        bestWr = wr;
+        bestPair = entry.key;
+      }
+    }
+    return bestPair == null ? null : (bestPair, bestWr);
+  }
+
+  // Shown beside the chosen pair only when some other pair rates the card higher
+  (String, double)? _betterPair(BrowseState state, CardRating card) {
+    final top = _topPair(state, card);
+    if (top == null || top.$1 == state.pair) return null;
+    final current = state.pairRatings[card.name];
+    if (current != null && top.$2 <= current) return null;
+    return top;
+  }
+
+  // Both tables use the same row height and badge slot, so their rows line up
+  static const double rankRowHeight = 44;
+  static const double badgeSlotHeight = 18;
+
+  Widget _badgeSlot(Widget? badge) =>
+      SizedBox(height: badgeSlotHeight, child: badge == null ? null : Center(child: badge));
+
+  // The card's best pair, for the overall table
+  Widget _topPairSlot(BrowseState state, CardRating card) {
+    final top = _topPair(state, card);
+    return _badgeSlot(top == null ? null : _pairBadge(top.$1, top.$2, faded: true));
+  }
+
+  // How much the pair rating gains or loses against the overall one
+  // Green when the card is better in the pair, red when it is worse
+  Widget _gihCompare(CardRating card, double? pairWr) {
+    const up = Color(0xFF4CAF6D);
+    const down = Color(0xFFD9534F);
+    if (card.gihwr == null || pairWr == null) {
+      return const Text('-', style: TextStyle(fontSize: 12));
+    }
+    final diff = (pairWr - card.gihwr!) * 100;
+    final sign = diff >= 0 ? '+' : '';
+    return Text(
+      '$sign${diff.toStringAsFixed(1)}%',
+      style: TextStyle(fontSize: 12, color: diff >= 0 ? up : down),
+    );
+  }
+
+  // A second ranking beside the first, ordered by the chosen pair's win rates
+  Widget _buildPairTable(BuildContext context, BrowseState state, List<CardRating> cards) {
+    final ranked = List<CardRating>.from(cards)
+      ..sort((a, b) => (state.pairRatings[b.name] ?? -1).compareTo(state.pairRatings[a.name] ?? -1));
+    return LayoutBuilder(
+      builder: (context, box) {
+        final showHeader = box.maxHeight >= 70;
+        return Column(
+          children: [
+            if (showHeader)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 30),
+                    Expanded(
+                      // Wraps and clips rather than overflowing when dragged narrow
+                      child: Wrap(
+                        spacing: 6,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text('In pair', style: Theme.of(context).textTheme.labelLarge),
+                          // How strong the pair's best commons and uncommons are
+                          if (state.pairAverage != null)
+                            Text('top20 ${(state.pairAverage! * 100).toStringAsFixed(1)}%',
+                                style: Theme.of(context).textTheme.bodySmall, overflow: TextOverflow.ellipsis),
+                        ],
+                      ),
+                    ),
+                    SizedBox(width: 70, child: Text('vs GIH', textAlign: TextAlign.right,
+                        style: Theme.of(context).textTheme.labelLarge)),
+                    SizedBox(width: 70, child: Align(alignment: Alignment.centerRight,
+                        child: _pairDots(state.pair, size: 12))),
+                  ],
+                ),
+              ),
+            if (showHeader) const Divider(height: 1),
+            Expanded(
+              child: ranked.isEmpty
+                  ? const Center(child: Text('No cards match'))
+                  : ListView.builder(
+                      itemCount: ranked.length,
+                      itemBuilder: (context, i) => _pairRow(context, state, i + 1, ranked[i]),
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _pairRow(BuildContext context, BrowseState state, int rank, CardRating card) {
+    final stats = Theme.of(context).textTheme.bodySmall;
+    return HoverZoom(
+      card: card,
+      rightInset: _rankWidth + 8,
+      zoomWidth: _zoomSize,
+      enabled: _zoomEnabled,
+      child: CardGestures(
+        onTap: () => _addToDeck(card),
+        onSecondary: () => _addToSide(card),
+        child: Container(
+          height: rankRowHeight,
+          decoration: _rowDecoration(card.color),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+          child: Row(
+            children: [
+              SizedBox(width: 30, child: Text('$rank', style: stats)),
+              Expanded(child: Text(card.name, overflow: TextOverflow.ellipsis)),
+              // The overall rating, colored by how it compares to the pair
+              SizedBox(
+                width: 70,
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: _gihCompare(card, state.pairRatings[card.name]),
+                ),
+              ),
+              SizedBox(
+                width: 70,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    _pairBadge(state.pair, state.pairRatings[card.name]),
+                    _badgeSlot(_betterPair(state, card) == null
+                        ? null
+                        : _pairBadge(_betterPair(state, card)!.$1, _betterPair(state, card)!.$2, faded: true)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -600,17 +821,8 @@ class _BrowseViewState extends State<_BrowseView> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
-            Text(
-              label,
-              style: TextStyle(
-                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-            Icon(
-              Icons.arrow_drop_down,
-              size: 16,
-              color: selected ? null : Colors.transparent,
-            ),
+            Text(label, style: TextStyle(fontWeight: selected ? FontWeight.bold : FontWeight.normal)),
+            Icon(Icons.arrow_drop_down, size: 16, color: selected ? null : Colors.transparent),
           ],
         ),
       ),
@@ -626,63 +838,36 @@ class _BrowseViewState extends State<_BrowseView> {
       zoomWidth: _zoomSize,
       enabled: _zoomEnabled,
       child: GestureDetector(
-        onTap: () => setState(
-          () =>
-              excluded ? _excluded.remove(card.name) : _excluded.add(card.name),
-        ),
+        onTap: () => setState(() => excluded ? _excluded.remove(card.name) : _excluded.add(card.name)),
         child: Opacity(
           opacity: excluded ? 0.35 : 1,
           child: Container(
+            height: rankRowHeight,
             decoration: _rowDecoration(card.color),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
             child: Row(
               children: [
                 SizedBox(width: 30, child: Text('$rank', style: stats)),
                 Expanded(
+                  child: Text(
+                    card.name,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(decoration: excluded ? TextDecoration.lineThrough : null),
+                  ),
+                ),
+                SizedBox(
+                  width: 70,
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text(
-                        card.name,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          decoration: excluded
-                              ? TextDecoration.lineThrough
-                              : null,
-                        ),
-                      ),
-                      Text(
-                        card.typeLine,
-                        style: stats,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      Text(card.gihwrLabel, style: stats),
+                      // The pair this card is best in, so the ceiling is visible
+                      _topPairSlot(context.read<BrowseCubit>().state, card),
                     ],
                   ),
                 ),
-                SizedBox(
-                  width: 70,
-                  child: Text(
-                    card.gihwrLabel,
-                    style: stats,
-                    textAlign: TextAlign.right,
-                  ),
-                ),
-                SizedBox(
-                  width: 70,
-                  child: Text(
-                    card.iwdLabel,
-                    style: stats,
-                    textAlign: TextAlign.right,
-                  ),
-                ),
-                SizedBox(
-                  width: 70,
-                  child: Text(
-                    card.alsaLabel,
-                    style: stats,
-                    textAlign: TextAlign.right,
-                  ),
-                ),
+                SizedBox(width: 70, child: Text(card.iwdLabel, style: stats, textAlign: TextAlign.right)),
+                SizedBox(width: 70, child: Text(card.alsaLabel, style: stats, textAlign: TextAlign.right)),
               ],
             ),
           ),
@@ -694,10 +879,7 @@ class _BrowseViewState extends State<_BrowseView> {
   // Which filters the current results contain, used to dim the rest
   // Each row ignores its own filter, otherwise picking one dims all the others
   Set<String> _availableTypes(List<CardRating> cards) {
-    final base = [
-      for (final c in cards)
-        if (_passesNonColor(c, ignoreTypes: true) && _passesColor(c)) c,
-    ];
+    final base = [for (final c in cards) if (_passesNonColor(c, ignoreTypes: true) && _passesColor(c)) c];
     return {
       for (final t in allTypes)
         if (base.any((c) => c.typeLine.split(' // ').first.contains(t))) t,
@@ -705,10 +887,7 @@ class _BrowseViewState extends State<_BrowseView> {
   }
 
   Set<String> _availableRarities(List<CardRating> cards) {
-    final base = [
-      for (final c in cards)
-        if (_passesNonColor(c, ignoreRarities: true) && _passesColor(c)) c,
-    ];
+    final base = [for (final c in cards) if (_passesNonColor(c, ignoreRarities: true) && _passesColor(c)) c];
     return {
       for (final r in allRarities)
         if (base.any((c) => c.rarity == r.$1)) r.$1,
@@ -716,10 +895,7 @@ class _BrowseViewState extends State<_BrowseView> {
   }
 
   Set<String> _availableColors(List<CardRating> cards) {
-    final base = [
-      for (final c in cards)
-        if (_passesNonColor(c)) c,
-    ];
+    final base = [for (final c in cards) if (_passesNonColor(c)) c];
     final present = <String>{};
     for (final c in base) {
       if (c.color.isEmpty) {
@@ -733,22 +909,41 @@ class _BrowseViewState extends State<_BrowseView> {
   }
 
   // Deck moves, cards can appear more than once so only one copy is removed
-  void _fromDeck(CardRating c) => setState(() => _deck.remove(c));
+  // Every change re-checks the color pair, unless one was chosen by hand
+  void _deckChanged() => context.read<BrowseCubit>().autoPair(_deck);
+
+  void _addToDeck(CardRating c) {
+    setState(() => _deck.add(c));
+    _deckChanged();
+  }
+
+  void _addToSide(CardRating c) => setState(() => _side.add(c));
+
+  void _fromDeck(CardRating c) {
+    setState(() => _deck.remove(c));
+    _deckChanged();
+  }
 
   void _fromSide(CardRating c) => setState(() => _side.remove(c));
 
-  void _deckToSide(CardRating c) => setState(() {
-    _deck.remove(c);
-    _side.add(c);
-  });
+  void _deckToSide(CardRating c) {
+    setState(() {
+      _deck.remove(c);
+      _side.add(c);
+    });
+    _deckChanged();
+  }
 
-  void _sideToDeck(CardRating c) => setState(() {
-    _side.remove(c);
-    _deck.add(c);
-  });
+  void _sideToDeck(CardRating c) {
+    setState(() {
+      _side.remove(c);
+      _deck.add(c);
+    });
+    _deckChanged();
+  }
 
   // Ranked filtered cards, plus deck and sideboard tables once they have cards
-  Widget _buildRankPanel(List<CardRating> filtered) {
+  Widget _buildRankPanel(List<CardRating> filtered, BrowseState state) {
     final hasSide = _side.isNotEmpty;
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -758,22 +953,21 @@ class _BrowseViewState extends State<_BrowseView> {
           children: [
             SizedBox(
               height: topH,
-              child: Column(
-                children: [
-                  // The header is dropped when the pane is dragged too small for it
-                  if (topH >= 70) _buildHeader(context),
-                  if (topH >= 70) const Divider(height: 1),
-                  Expanded(
-                    child: filtered.isEmpty
-                        ? const Center(child: Text('No cards match'))
-                        : ListView.builder(
-                            itemCount: filtered.length,
-                            itemBuilder: (context, i) =>
-                                _row(context, i + 1, filtered[i]),
+              child: _rankPair(state, Column(
+                        children: [
+                          // The header is dropped when the pane is dragged too small for it
+                          if (topH >= 70) _buildHeader(context),
+                          if (topH >= 70) const Divider(height: 1),
+                          Expanded(
+                            child: filtered.isEmpty
+                                ? const Center(child: Text('No cards match'))
+                                : ListView.builder(
+                                    itemCount: filtered.length,
+                                    itemBuilder: (context, i) => _row(context, i + 1, filtered[i]),
+                                  ),
                           ),
-                  ),
-                ],
-              ),
+                        ],
+                      ), _buildPairTable(context, state, filtered)),
             ),
             if (hasSide) ...[
               _buildDeckSplitter(h),
@@ -784,25 +978,16 @@ class _BrowseViewState extends State<_BrowseView> {
                       padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
                       child: Row(
                         children: [
-                          Expanded(
-                            child: Text(
-                              'Sideboard',
-                              style: Theme.of(context).textTheme.labelLarge,
-                            ),
-                          ),
-                          Text(
-                            '${_side.length}',
-                            style: Theme.of(context).textTheme.labelLarge,
-                          ),
-                        ],
+                          Expanded(child: Text('Sideboard', style: Theme.of(context).textTheme.labelLarge)),
+                          Text('${_side.length}', style: Theme.of(context).textTheme.labelLarge),
+                                ],
                       ),
                     ),
                     const Divider(height: 1),
                     Expanded(
                       child: ListView.builder(
                         itemCount: _ranked(_side).length,
-                        itemBuilder: (context, i) =>
-                            _row(context, i + 1, _ranked(_side)[i]),
+                        itemBuilder: (context, i) => _row(context, i + 1, _ranked(_side)[i]),
                       ),
                     ),
                   ],
@@ -821,18 +1006,9 @@ class _BrowseViewState extends State<_BrowseView> {
       cursor: SystemMouseCursors.resizeRow,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: () => setState(
-          () => _bottomHeight = snapTo(
-            _bottomHeight,
-            0.0,
-            MediaQuery.of(context).size.height,
-          ),
-        ),
+        onTap: () => setState(() => _bottomHeight = snapTo(_bottomHeight, 0.0, MediaQuery.of(context).size.height)),
         onVerticalDragUpdate: (d) => setState(() {
-          _bottomHeight = (_bottomHeight - d.delta.dy).clamp(
-            0.0,
-            MediaQuery.of(context).size.height,
-          );
+          _bottomHeight = (_bottomHeight - d.delta.dy).clamp(0.0, MediaQuery.of(context).size.height);
         }),
         child: SizedBox(
           // Tall grab area, the visible bar stays thin
@@ -841,10 +1017,7 @@ class _BrowseViewState extends State<_BrowseView> {
             child: Container(
               width: 80,
               height: 4,
-              decoration: BoxDecoration(
-                color: Theme.of(context).dividerColor,
-                borderRadius: BorderRadius.circular(2),
-              ),
+              decoration: BoxDecoration(color: Theme.of(context).dividerColor, borderRadius: BorderRadius.circular(2)),
             ),
           ),
         ),
@@ -869,10 +1042,7 @@ class _BrowseViewState extends State<_BrowseView> {
             child: Container(
               width: 4,
               height: 80,
-              decoration: BoxDecoration(
-                color: Theme.of(context).dividerColor,
-                borderRadius: BorderRadius.circular(2),
-              ),
+              decoration: BoxDecoration(color: Theme.of(context).dividerColor, borderRadius: BorderRadius.circular(2)),
             ),
           ),
         ),
@@ -897,10 +1067,7 @@ class _BrowseViewState extends State<_BrowseView> {
             child: Container(
               width: 80,
               height: 4,
-              decoration: BoxDecoration(
-                color: Theme.of(context).dividerColor,
-                borderRadius: BorderRadius.circular(2),
-              ),
+              decoration: BoxDecoration(color: Theme.of(context).dividerColor, borderRadius: BorderRadius.circular(2)),
             ),
           ),
         ),
@@ -911,8 +1078,7 @@ class _BrowseViewState extends State<_BrowseView> {
   // Curve view: lands far left, columns by cost with spells on top, creatures below
   // Cards are scaled to fit the area so every column stays visible
   // Left click removes a card, right click or long press moves it across
-  Widget _curve(
-    List<CardRating> cards, {
+  Widget _curve(List<CardRating> cards, {
     required bool showTargets,
     required String emptyText,
     required void Function(CardRating) onTap,
@@ -923,37 +1089,15 @@ class _BrowseViewState extends State<_BrowseView> {
     if (cards.isEmpty) return Center(child: Text(emptyText));
     final lands = _sortedPool(cards.where((c) => c.isLand).toList());
     final costs = List.generate(7, (i) => i);
-    final spellRows = [
-      for (final c in costs)
-        _sortedPool(
-          cards
-              .where((x) => !x.isLand && !x.isCreature && _bucketOf(x) == c)
-              .toList(),
-        ),
-    ];
-    final creatureRows = [
-      for (final c in costs)
-        _sortedPool(
-          cards
-              .where((x) => !x.isLand && x.isCreature && _bucketOf(x) == c)
-              .toList(),
-        ),
-    ];
-    int maxLen(List<List<CardRating>> rows) =>
-        rows.fold(0, (m, r) => r.length > m ? r.length : m);
+    final spellRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && !x.isCreature && _bucketOf(x) == c).toList())];
+    final creatureRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && x.isCreature && _bucketOf(x) == c).toList())];
+    int maxLen(List<List<CardRating>> rows) => rows.fold(0, (m, r) => r.length > m ? r.length : m);
     final maxTop = maxLen(spellRows);
-    final maxBottom = maxLen(
-      [
-        creatureRows,
-        [lands],
-      ].expand((e) => e).toList(),
-    );
+    final maxBottom = maxLen([creatureRows, [lands]].expand((e) => e).toList());
     final creatures = creatureRows.fold(0, (s, r) => s + r.length);
     final spells = spellRows.fold(0, (s, r) => s + r.length);
     final nonLands = cards.where((c) => !c.isLand).toList();
-    final avgCost = nonLands.isEmpty
-        ? null
-        : nonLands.fold(0.0, (s, c) => s + _costOf(c)) / nonLands.length;
+    final avgCost = nonLands.isEmpty ? null : nonLands.fold(0.0, (s, c) => s + _costOf(c)) / nonLands.length;
     return LayoutBuilder(
       builder: (context, box) {
         // Dragged almost shut, nothing sensible fits, so draw nothing
@@ -980,11 +1124,7 @@ class _BrowseViewState extends State<_BrowseView> {
                       child: _cardStack(lands, w, offset, onTap, onSecondary),
                     ),
                   ),
-                  _columnLabel(
-                    'Lands',
-                    lands.length,
-                    showTargets ? (16, 18) : null,
-                  ),
+                  _columnLabel('Lands', lands.length, showTargets ? (16, 18) : null),
                 ],
               ),
             ),
@@ -992,47 +1132,30 @@ class _BrowseViewState extends State<_BrowseView> {
               Expanded(
                 // Dropping a card here counts it as this cost from now on
                 child: DragTarget<CardRating>(
-                  onAcceptWithDetails: (d) =>
-                      setState(() => _costOverride[d.data.name] = c),
+                  onAcceptWithDetails: (d) => setState(() => _costOverride[d.data.name] = c),
                   builder: (context, candidate, rejected) => Column(
                     mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (topH > 0)
-                        SizedBox(
-                          height: topH,
-                          child: Align(
-                            alignment: Alignment.bottomCenter,
-                            child: _cardStack(
-                              spellRows[c],
-                              w,
-                              offset,
-                              onTap,
-                              onSecondary,
-                              draggable: showTargets,
-                            ),
-                          ),
+                  children: [
+                    if (topH > 0)
+                      SizedBox(
+                        height: topH,
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: _cardStack(spellRows[c], w, offset, onTap, onSecondary, draggable: showTargets),
                         ),
-                      if (showTargets && topH > 0)
-                        _rowCount(spellRows[c].length, _spellRange(c)),
-                      if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
-                      if (bottomH > 0)
-                        SizedBox(
-                          height: bottomH,
-                          child: Align(
-                            alignment: Alignment.bottomCenter,
-                            child: _cardStack(
-                              creatureRows[c],
-                              w,
-                              offset,
-                              onTap,
-                              onSecondary,
-                              draggable: showTargets,
-                            ),
-                          ),
+                      ),
+                    if (showTargets && topH > 0) _rowCount(spellRows[c].length, _spellRange(c)),
+                    if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
+                    if (bottomH > 0)
+                      SizedBox(
+                        height: bottomH,
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: _cardStack(creatureRows[c], w, offset, onTap, onSecondary, draggable: showTargets),
                         ),
-                      if (showTargets && bottomH > 0)
-                        _rowCount(creatureRows[c].length, _creatureRange(c)),
-                      Text(c == 6 ? '6+' : '$c'),
+                      ),
+                    if (showTargets && bottomH > 0) _rowCount(creatureRows[c].length, _creatureRange(c)),
+                    Text(c == 6 ? '6+' : '$c'),
                     ],
                   ),
                 ),
@@ -1054,20 +1177,14 @@ class _BrowseViewState extends State<_BrowseView> {
                       runSpacing: 2,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        Text(
-                          'Deck ${cards.length}',
-                          style: const TextStyle(fontSize: 12),
-                        ),
+                        Text('Deck ${cards.length}', style: const TextStyle(fontSize: 12)),
                         _totalLabel('Creatures', creatures, (14, 17)),
                         _totalLabel('Noncreatures', spells, (6, 9)),
                         _avgCostLabel(avgCost),
                         if (onAddLand != null) _basicLandBar(lands, onAddLand),
                       ],
                     )
-                  : Text(
-                      'Sideboard ${cards.length}',
-                      style: const TextStyle(fontSize: 12),
-                    ),
+                  : Text('Sideboard ${cards.length}', style: const TextStyle(fontSize: 12)),
             ),
             Expanded(child: SingleChildScrollView(child: grid)),
           ],
@@ -1079,22 +1196,15 @@ class _BrowseViewState extends State<_BrowseView> {
   // Cost the deck should count this card as, after any manual move
   int _bucketOf(CardRating card) => _costOverride[card.name] ?? card.costBucket;
 
-  double _costOf(CardRating card) =>
-      (_costOverride[card.name] ?? card.cmc).toDouble();
+  double _costOf(CardRating card) => (_costOverride[card.name] ?? card.cmc).toDouble();
 
   // Largest card width that keeps all eight columns and both rows in view
-  double _fitCardWidth(
-    BoxConstraints box,
-    int maxTop,
-    int maxBottom,
-    bool showTargets,
-  ) {
+  double _fitCardWidth(BoxConstraints box, int maxTop, int maxBottom, bool showTargets) {
     const columns = 8;
     final byWidth = (box.maxWidth - 8) / columns;
     // Room for the two row counts, the cost label and a wrapped header
     final labels = showTargets ? 96.0 : 30.0;
-    final rows =
-        (maxTop == 0 ? 0.0 : 1.4 + 0.15 * (maxTop - 1)) +
+    final rows = (maxTop == 0 ? 0.0 : 1.4 + 0.15 * (maxTop - 1)) +
         (maxBottom == 0 ? 0.0 : 1.4 + 0.15 * (maxBottom - 1));
     final byHeight = rows <= 0 ? byWidth : (box.maxHeight - labels) / rows;
     final fit = byWidth < byHeight ? byWidth : byHeight;
@@ -1102,14 +1212,9 @@ class _BrowseViewState extends State<_BrowseView> {
     return (fit < preferred ? fit : preferred).clamp(24.0, 400.0);
   }
 
-  Widget _cardStack(
-    List<CardRating> cards,
-    double w,
-    double offset,
-    void Function(CardRating) onTap,
-    void Function(CardRating) onSecondary, {
-    bool draggable = false,
-  }) {
+  Widget _cardStack(List<CardRating> cards, double w, double offset,
+      void Function(CardRating) onTap, void Function(CardRating) onSecondary,
+      {bool draggable = false}) {
     if (cards.isEmpty) return SizedBox(width: w);
     final h = w * 1.4 + (cards.length - 1) * offset;
     return SizedBox(
@@ -1125,17 +1230,17 @@ class _BrowseViewState extends State<_BrowseView> {
                 w,
                 draggable,
                 HoverZoom(
-                  card: cards[i],
-                  zoomWidth: _zoomSize,
-                  enabled: _zoomEnabled,
-                  child: CardGestures(
-                    onTap: () => onTap(cards[i]),
-                    onSecondary: () => onSecondary(cards[i]),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: cardImage(cards[i], width: w, decodeWidth: w),
-                    ),
+                card: cards[i],
+                zoomWidth: _zoomSize,
+                enabled: _zoomEnabled,
+                child: CardGestures(
+                  onTap: () => onTap(cards[i]),
+                  onSecondary: () => onSecondary(cards[i]),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: cardImage(cards[i], width: w, decodeWidth: w),
                   ),
+                ),
                 ),
               ),
             ),
@@ -1147,27 +1252,20 @@ class _BrowseViewState extends State<_BrowseView> {
   // Cards can be dragged sideways onto another cost column, which overrides the
   // cost used for the curve and the average. Horizontal only, so the area still
   // scrolls vertically with a finger.
-  Widget _maybeDraggable(
-    CardRating card,
-    double w,
-    bool enabled,
-    Widget child,
-  ) {
+  Widget _maybeDraggable(CardRating card, double w, bool enabled, Widget child) {
     if (!enabled) return child;
     return Draggable<CardRating>(
       data: card,
       affinity: Axis.horizontal,
       feedback: Opacity(
         opacity: 0.85,
-        child: SizedBox(
-          width: w,
-          child: cardImage(card, width: w, decodeWidth: w),
-        ),
+        child: SizedBox(width: w, child: cardImage(card, width: w, decodeWidth: w)),
       ),
       childWhenDragging: Opacity(opacity: 0.3, child: child),
       child: child,
     );
   }
+
 
   // Common limited guidance for a 17 land deck, split by card type
   (int, int)? _creatureRange(int cost) {
@@ -1201,13 +1299,8 @@ class _BrowseViewState extends State<_BrowseView> {
     final ok = count >= range.$1 && count <= range.$2;
     return SizedBox(
       height: 14,
-      child: Text(
-        '$count/${_rangeLabel(range)}',
-        style: TextStyle(
-          fontSize: 10,
-          color: ok ? const Color(0xFF4CAF6D) : null,
-        ),
-      ),
+      child: Text('$count/${_rangeLabel(range)}',
+          style: TextStyle(fontSize: 10, color: ok ? const Color(0xFF4CAF6D) : null)),
     );
   }
 
@@ -1220,13 +1313,8 @@ class _BrowseViewState extends State<_BrowseView> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(label),
-        Text(
-          '$count/${_rangeLabel(range)}',
-          style: TextStyle(
-            fontSize: 11,
-            color: ok ? const Color(0xFF4CAF6D) : null,
-          ),
-        ),
+        Text('$count/${_rangeLabel(range)}',
+            style: TextStyle(fontSize: 11, color: ok ? const Color(0xFF4CAF6D) : null)),
       ],
     );
   }
@@ -1234,9 +1322,7 @@ class _BrowseViewState extends State<_BrowseView> {
   // 5(4-6) or 2.5(2-3), middle first, one decimal only when it isn't whole
   String _rangeLabel((int, int) range) {
     final mid = (range.$1 + range.$2) / 2;
-    final label = mid == mid.roundToDouble()
-        ? mid.round().toString()
-        : mid.toStringAsFixed(1);
+    final label = mid == mid.roundToDouble() ? mid.round().toString() : mid.toStringAsFixed(1);
     return '$label(${range.$1}-${range.$2})';
   }
 
@@ -1245,10 +1331,7 @@ class _BrowseViewState extends State<_BrowseView> {
     final ok = count >= range.$1 && count <= range.$2;
     return Text(
       '$label $count/${_rangeLabel(range)}',
-      style: TextStyle(
-        fontSize: 12,
-        color: ok ? const Color(0xFF4CAF6D) : null,
-      ),
+      style: TextStyle(fontSize: 12, color: ok ? const Color(0xFF4CAF6D) : null),
     );
   }
 
@@ -1259,10 +1342,7 @@ class _BrowseViewState extends State<_BrowseView> {
     final ok = avg != null && avg >= low && avg <= high;
     return Text(
       'Avg cost ${avg == null ? '-' : avg.toStringAsFixed(1)}/${((low + high) / 2).toStringAsFixed(1)}($low-$high)',
-      style: TextStyle(
-        fontSize: 12,
-        color: ok ? const Color(0xFF4CAF6D) : null,
-      ),
+      style: TextStyle(fontSize: 12, color: ok ? const Color(0xFF4CAF6D) : null),
     );
   }
 
@@ -1310,11 +1390,7 @@ class _BrowseViewState extends State<_BrowseView> {
     ];
   }
 
-  bool _passesNonColor(
-    CardRating c, {
-    bool ignoreTypes = false,
-    bool ignoreRarities = false,
-  }) {
+  bool _passesNonColor(CardRating c, {bool ignoreTypes = false, bool ignoreRarities = false}) {
     final q = _searchTerm;
     if (q.isNotEmpty &&
         !c.name.toLowerCase().contains(q) &&
@@ -1322,21 +1398,13 @@ class _BrowseViewState extends State<_BrowseView> {
         !c.oracleText.toLowerCase().contains(q)) {
       return false;
     }
-    if (!ignoreRarities &&
-        _rarities.isNotEmpty &&
-        !_rarities.contains(c.rarity)) {
-      return false;
-    }
+    if (!ignoreRarities && _rarities.isNotEmpty && !_rarities.contains(c.rarity)) return false;
     // Match against the front face so spell//land backsides don't count as lands
     if (!ignoreTypes && _types.isNotEmpty) {
-      if (!_types.any((t) => c.typeLine.split(' // ').first.contains(t))) {
-        return false;
-      }
+      if (!_types.any((t) => c.typeLine.split(' // ').first.contains(t))) return false;
     }
     // With a floor set, unrated cards (low sample) are dropped too
-    if (_minGih > 0 && (c.gihwr == null || c.gihwr! * 100 < _minGih)) {
-      return false;
-    }
+    if (_minGih > 0 && (c.gihwr == null || c.gihwr! * 100 < _minGih)) return false;
     return true;
   }
 
@@ -1359,10 +1427,7 @@ class _BrowseViewState extends State<_BrowseView> {
   // colors that are actually present instead of showing an empty list
   void _syncColors(List<CardRating> cards) {
     if (_colors.isEmpty) return;
-    final base = [
-      for (final c in cards)
-        if (_passesNonColor(c)) c,
-    ];
+    final base = [for (final c in cards) if (_passesNonColor(c)) c];
     if (base.isEmpty || base.any(_passesColor)) return;
     final present = <String>{};
     for (final c in base) {
@@ -1382,46 +1447,31 @@ class _BrowseViewState extends State<_BrowseView> {
 
   List<CardRating> _ranked(List<CardRating> cards) {
     final sorted = List<CardRating>.from(cards);
-    sorted.sort(
-      (a, b) => switch (_rankStat) {
-        RankStat.gihwr => (b.gihwr ?? -1).compareTo(a.gihwr ?? -1),
-        RankStat.iwd => (b.iwd ?? -9).compareTo(a.iwd ?? -9),
-        RankStat.alsa => (a.alsa ?? 99).compareTo(b.alsa ?? 99),
-      },
-    );
+    sorted.sort((a, b) => switch (_rankStat) {
+      RankStat.gihwr => (b.gihwr ?? -1).compareTo(a.gihwr ?? -1),
+      RankStat.iwd => (b.iwd ?? -9).compareTo(a.iwd ?? -9),
+      RankStat.alsa => (a.alsa ?? 99).compareTo(b.alsa ?? 99),
+    });
     return sorted;
   }
 
   double? _avg(List<CardRating> cards, double? Function(CardRating) f) {
-    final vals = [
-      for (final c in cards)
-        if (f(c) != null) f(c)!,
-    ];
+    final vals = [for (final c in cards) if (f(c) != null) f(c)!];
     if (vals.isEmpty) return null;
     return vals.reduce((a, b) => a + b) / vals.length;
   }
 
   // Basics aren't drafted, so they get their own add buttons
-  Widget _basicLandBar(
-    List<CardRating> lands,
-    void Function(CardRating) onAdd,
-  ) {
+  Widget _basicLandBar(List<CardRating> lands, void Function(CardRating) onAdd) {
     if (lands.isEmpty) return const SizedBox.shrink();
-    const names = {
-      'W': 'Plains',
-      'U': 'Island',
-      'B': 'Swamp',
-      'R': 'Mountain',
-      'G': 'Forest',
-    };
+    const names = {'W': 'Plains', 'U': 'Island', 'B': 'Swamp', 'R': 'Mountain', 'G': 'Forest'};
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         const Text('Add land', style: TextStyle(fontSize: 11)),
         const SizedBox(width: 4),
         for (final entry in names.entries)
-          if (lands.where((l) => l.name == entry.value).firstOrNull
-              case final land?)
+          if (lands.where((l) => l.name == entry.value).firstOrNull case final land?)
             Padding(
               padding: const EdgeInsets.only(right: 3),
               child: Tooltip(
@@ -1432,14 +1482,8 @@ class _BrowseViewState extends State<_BrowseView> {
                     width: 20,
                     height: 20,
                     alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: _manaColor(entry.key),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Text(
-                      entry.key,
-                      style: const TextStyle(fontSize: 11, color: Colors.black),
-                    ),
+                    decoration: BoxDecoration(color: _manaColor(entry.key), shape: BoxShape.circle),
+                    child: Text(entry.key, style: const TextStyle(fontSize: 11, color: Colors.black)),
                   ),
                 ),
               ),
@@ -1450,9 +1494,7 @@ class _BrowseViewState extends State<_BrowseView> {
 
   BoxDecoration _rowDecoration(String color) {
     final letters = color.isEmpty ? ['C'] : color.split('');
-    final colors = [
-      for (final l in letters) _manaColor(l).withValues(alpha: 0.35),
-    ];
+    final colors = [for (final l in letters) _manaColor(l).withValues(alpha: 0.35)];
     if (colors.length == 1) return BoxDecoration(color: colors.first);
     return BoxDecoration(gradient: LinearGradient(colors: colors));
   }

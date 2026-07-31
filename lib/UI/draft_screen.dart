@@ -409,6 +409,10 @@ class _DraftViewState extends State<_DraftView> {
   double _rankWidth = 420;
   // Cards dragged to another cost column, keyed by card name
   final Map<String, int> _costOverride = {};
+  // The overall ranking can be hidden to leave the pair ranking alone
+  bool _showSolo = true;
+  // The pair table has its own width, so its splitter leaves the first table alone
+  double _pairWidth = 340;
   // Vertical split between the pack table and the picks table
   double _rankSplit = 0.6;
 
@@ -446,20 +450,51 @@ class _DraftViewState extends State<_DraftView> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 IconButton(
+                  tooltip: _showSolo ? 'Hide the overall ranking' : 'Show the overall ranking',
+                  icon: Icon(_showSolo ? Icons.table_rows : Icons.table_rows_outlined,
+                      size: 20, color: _showSolo ? null : Theme.of(context).disabledColor),
+                  onPressed: state.pair.isEmpty ? null : () => setState(() => _showSolo = !_showSolo),
+                ),
+                IconButton(
                   tooltip: state.pair.isEmpty ? 'Show ratings for a color pair' : 'Hide pair ratings',
                   icon: Icon(Icons.palette_outlined,
                       color: state.pair.isEmpty ? Theme.of(context).disabledColor : null),
                   onPressed: () => context.read<DraftCubit>().togglePair(),
                 ),
                 if (state.pair.isNotEmpty)
-                  DropdownButton<String>(
-                    value: state.pair,
-                    underline: const SizedBox.shrink(),
-                    items: [
-                      for (final p in DraftCubit.pairs)
-                        DropdownMenuItem(value: p, child: _pairDots(p, size: 12)),
-                    ],
-                    onChanged: (v) => v == null ? null : context.read<DraftCubit>().setPair(v),
+                  SizedBox(
+                    // Wide enough for the dots and a percentage, so the menu can't overflow
+                    width: 108,
+                    child: DropdownButton<String>(
+                      value: state.pair,
+                      isExpanded: true,
+                      underline: const SizedBox.shrink(),
+                      // Strongest pair first, so the menu doubles as a ranking
+                      selectedItemBuilder: (context) => [
+                        for (final p in _pairsByRating(state))
+                          Align(alignment: Alignment.centerLeft, child: _pairDots(p, size: 12)),
+                      ],
+                      items: [
+                        for (final p in _pairsByRating(state))
+                          DropdownMenuItem(
+                            value: p,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _pairDots(p, size: 12),
+                                const SizedBox(width: 4),
+                                Text(
+                                  state.pairAverages[p] == null
+                                      ? '-'
+                                      : '${(state.pairAverages[p]! * 100).toStringAsFixed(1)}%',
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                      onChanged: (v) => v == null ? null : context.read<DraftCubit>().setPairManually(v),
+                    ),
                   ),
               ],
             ),
@@ -524,17 +559,26 @@ class _DraftViewState extends State<_DraftView> {
                         Expanded(child: _buildPack(context, state.currentPack)),
                         _buildVSplitter(),
                         SizedBox(
-                          width: _rankWidth,
+                          width: _panelWidth(state),
                           child: LayoutBuilder(
                             builder: (context, inner) => Column(
                               children: [
                                 SizedBox(
                                   height: splitSize(inner.maxHeight, _rankSplit),
-                                  child: _buildRankTable(context, 'Pack', state.currentPack, pickable: true),
+                                  // Overall ranking on the left, the pair ranking beside it
+                                  child: _rankPair(
+                                    state,
+                                    _buildRankTable(context, 'Pack', state.currentPack, pickable: true),
+                                    _buildPairTable(context, state, state.currentPack, pickable: true),
+                                  ),
                                 ),
                                 _buildRankSplitter(inner.maxHeight),
                                 Expanded(
-                                  child: _buildRankTable(context, 'Your picks', state.playerPool, pickable: false),
+                                  child: _rankPair(
+                                    state,
+                                    _buildRankTable(context, 'Your picks', state.playerPool, pickable: false),
+                                    _buildPairTable(context, state, state.playerPool, pickable: false),
+                                  ),
                                 ),
                               ],
                             ),
@@ -575,6 +619,54 @@ class _DraftViewState extends State<_DraftView> {
                 color: Theme.of(context).dividerColor,
                 borderRadius: BorderRadius.circular(2),
               ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Overall ranking beside the pair ranking, either side can be absent
+  Widget _rankPair(DraftState state, Widget solo, Widget pair) {
+    if (state.pair.isEmpty) return solo;
+    if (!_showSolo) return pair;
+    return LayoutBuilder(
+      builder: (context, row) => Row(
+        children: [
+          SizedBox(
+            width: (row.maxWidth - _pairWidth - 14).clamp(0.0, row.maxWidth),
+            child: solo,
+          ),
+          _buildPairSplitter(),
+          SizedBox(width: _pairWidth, child: pair),
+        ],
+      ),
+    );
+  }
+
+  // How wide the whole panel needs to be for whatever is showing
+  double _panelWidth(DraftState state) {
+    if (state.pair.isEmpty) return _rankWidth;
+    return _showSolo ? _rankWidth + _pairWidth + 14 : _pairWidth;
+  }
+
+  // Drag to resize the pair table only, the first table keeps its width
+  Widget _buildPairSplitter() {
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() => _pairWidth = snapTo(_pairWidth, 214.0, 700.0)),
+        onHorizontalDragUpdate: (d) => setState(() {
+          _pairWidth = (_pairWidth - d.delta.dx).clamp(214.0, 700.0);
+        }),
+        child: SizedBox(
+          width: 14,
+          child: Center(
+            child: Container(
+              width: 3,
+              height: 60,
+              decoration: BoxDecoration(color: Theme.of(context).dividerColor, borderRadius: BorderRadius.circular(2)),
             ),
           ),
         ),
@@ -839,6 +931,102 @@ class _DraftViewState extends State<_DraftView> {
     );
   }
 
+  // A second ranking beside the first, ordered by the chosen pair's win rates
+  Widget _buildPairTable(BuildContext context, DraftState state, List<CardRating> cards, {required bool pickable}) {
+    final ranked = List<CardRating>.from(cards)
+      ..sort((a, b) => (state.pairRatings[b.name] ?? -1).compareTo(state.pairRatings[a.name] ?? -1));
+    return LayoutBuilder(
+      builder: (context, box) {
+        final showHeader = box.maxHeight >= 70;
+        return Column(
+          children: [
+            if (showHeader)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 22),
+                    Expanded(
+                      // Wraps and clips rather than overflowing when dragged narrow
+                      child: Wrap(
+                        spacing: 6,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text('In pair', style: Theme.of(context).textTheme.labelLarge),
+                          // How strong the pair's best commons and uncommons are
+                          if (state.pairAverage != null)
+                            Text('top20 ${(state.pairAverage! * 100).toStringAsFixed(1)}%',
+                                style: Theme.of(context).textTheme.bodySmall, overflow: TextOverflow.ellipsis),
+                        ],
+                      ),
+                    ),
+                    SizedBox(width: 62, child: Text('vs GIH', textAlign: TextAlign.right,
+                        style: Theme.of(context).textTheme.labelLarge)),
+                    SizedBox(width: 62, child: Align(alignment: Alignment.centerRight,
+                        child: _pairDots(state.pair, size: 12))),
+                  ],
+                ),
+              ),
+            if (showHeader) const Divider(height: 1),
+            Expanded(
+              child: ranked.isEmpty
+                  ? const Center(child: Text('Nothing yet'))
+                  : ListView.builder(
+                      itemCount: ranked.length,
+                      itemBuilder: (context, i) => _pairRow(context, state, i + 1, ranked[i], pickable: pickable),
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _pairRow(BuildContext context, DraftState state, int rank, CardRating card, {required bool pickable}) {
+    final stats = Theme.of(context).textTheme.bodySmall;
+    return HoverZoom(
+      card: card,
+      rightInset: _rankWidth + 8,
+      zoomWidth: _zoomSize,
+      enabled: _zoomEnabled,
+      child: CardGestures(
+        onTap: pickable ? () => context.read<DraftCubit>().pickCard(card) : null,
+        onSecondary: pickable ? () => context.read<DraftCubit>().pickCard(card, toSide: true) : null,
+        child: Container(
+          height: rankRowHeight,
+          decoration: _rowDecoration(card.color),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          child: Row(
+            children: [
+              SizedBox(width: 22, child: Text('$rank', style: stats)),
+              Expanded(child: Text(card.name, overflow: TextOverflow.ellipsis)),
+              // The overall rating, colored by how it compares to the pair
+              SizedBox(
+                width: 62,
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: _gihCompare(card, state.pairRatings[card.name]),
+                ),
+              ),
+              SizedBox(
+                width: 62,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    _pairBadge(state.pair, state.pairRatings[card.name]),
+                    _badgeSlot(_betterPair(state, card) == null
+                        ? null
+                        : _pairBadge(_betterPair(state, card)!.$1, _betterPair(state, card)!.$2, faded: true)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _headerCell(String label, RankStat stat) {
     final selected = _rankStat == stat;
     return InkWell(
@@ -854,6 +1042,12 @@ class _DraftViewState extends State<_DraftView> {
         ),
       ),
     );
+  }
+
+  // Pairs ordered by how strong their playables are, unrated ones last
+  List<String> _pairsByRating(DraftState state) {
+    return [...DraftCubit.pairs]
+      ..sort((a, b) => (state.pairAverages[b] ?? -1).compareTo(state.pairAverages[a] ?? -1));
   }
 
   // Two mana dots standing in for the pair, no letters to read
@@ -872,14 +1066,14 @@ class _DraftViewState extends State<_DraftView> {
     );
   }
 
-  // Win rate within a pair, boxed in that pair's colors
-  // faded marks an alternative pair rather than the chosen one
+  // The chosen pair is plain text, an alternative pair is boxed in its colors
   Widget _pairBadge(String pair, double? wr, {bool faded = false}) {
     if (pair.isEmpty) return const SizedBox.shrink();
-    final alpha = faded ? 0.2 : 0.4;
+    final label = wr == null ? '-' : '${(wr * 100).toStringAsFixed(1)}%';
+    if (!faded) return Text(label, style: const TextStyle(fontSize: 12));
+    const alpha = 0.2;
     return Container(
-      margin: const EdgeInsets.only(top: 2),
-      padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+      padding: const EdgeInsets.symmetric(horizontal: 3),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(3),
         border: Border.all(color: _manaColor(pair[1]).withValues(alpha: 0.9)),
@@ -892,10 +1086,7 @@ class _DraftViewState extends State<_DraftView> {
         mainAxisSize: MainAxisSize.min,
         children: [
           _pairDots(pair, size: 7),
-          Text(
-            wr == null ? '-' : '${(wr * 100).toStringAsFixed(1)}%',
-            style: const TextStyle(fontSize: 10),
-          ),
+          Text(label, style: const TextStyle(fontSize: 10)),
         ],
       ),
     );
@@ -903,15 +1094,11 @@ class _DraftViewState extends State<_DraftView> {
 
   // The pair where this card is best, when that beats both the chosen pair and
   // its overall rating. Nothing to sort by, it's just worth knowing.
-  (String, double)? _betterPair(DraftState state, CardRating card) {
-    if (state.allPairRatings.isEmpty) return null;
-    final current = state.pairRatings[card.name] ?? card.gihwr ?? 0;
-    final overall = card.gihwr ?? 0;
-    final floor = current > overall ? current : overall;
+  // The pair this card performs best in, whichever that is
+  (String, double)? _topPair(DraftState state, CardRating card) {
     String? bestPair;
-    var bestWr = floor;
+    var bestWr = -1.0;
     for (final entry in state.allPairRatings.entries) {
-      if (entry.key == state.pair) continue;
       final wr = entry.value[card.name];
       if (wr != null && wr > bestWr) {
         bestWr = wr;
@@ -921,9 +1108,46 @@ class _DraftViewState extends State<_DraftView> {
     return bestPair == null ? null : (bestPair, bestWr);
   }
 
+  // Shown beside the chosen pair only when some other pair rates the card higher
+  (String, double)? _betterPair(DraftState state, CardRating card) {
+    final top = _topPair(state, card);
+    if (top == null || top.$1 == state.pair) return null;
+    final current = state.pairRatings[card.name];
+    if (current != null && top.$2 <= current) return null;
+    return top;
+  }
+
+  // Both tables use the same row height and badge slot, so their rows line up
+  static const double rankRowHeight = 44;
+  static const double badgeSlotHeight = 18;
+
+  Widget _badgeSlot(Widget? badge) =>
+      SizedBox(height: badgeSlotHeight, child: badge == null ? null : Center(child: badge));
+
+  // The card's best pair, for the overall table
+  Widget _topPairSlot(DraftState state, CardRating card) {
+    final top = _topPair(state, card);
+    return _badgeSlot(top == null ? null : _pairBadge(top.$1, top.$2, faded: true));
+  }
+
+  // How much the pair rating gains or loses against the overall one
+  // Green when the card is better in the pair, red when it is worse
+  Widget _gihCompare(CardRating card, double? pairWr) {
+    const up = Color(0xFF4CAF6D);
+    const down = Color(0xFFD9534F);
+    if (card.gihwr == null || pairWr == null) {
+      return const Text('-', style: TextStyle(fontSize: 12));
+    }
+    final diff = (pairWr - card.gihwr!) * 100;
+    final sign = diff >= 0 ? '+' : '';
+    return Text(
+      '$sign${diff.toStringAsFixed(1)}%',
+      style: TextStyle(fontSize: 12, color: diff >= 0 ? up : down),
+    );
+  }
+
   Widget _rankRow(BuildContext context, int rank, CardRating card, {required bool pickable}) {
     final stats = Theme.of(context).textTheme.bodySmall;
-    final state = context.read<DraftCubit>().state;
     return HoverZoom(
       card: card,
       rightInset: _rankWidth + 8,
@@ -933,8 +1157,9 @@ class _DraftViewState extends State<_DraftView> {
         onTap: pickable ? () => context.read<DraftCubit>().pickCard(card) : null,
         onSecondary: pickable ? () => context.read<DraftCubit>().pickCard(card, toSide: true) : null,
         child: Container(
+          height: rankRowHeight,
           decoration: _rowDecoration(card.color),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
           child: Row(
             children: [
               SizedBox(width: 22, child: Text('$rank', style: stats)),
@@ -944,12 +1169,9 @@ class _DraftViewState extends State<_DraftView> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    // Chosen pair on top, it's what the list is sorted by
-                    if (state.pair.isNotEmpty) _pairBadge(state.pair, state.pairRatings[card.name]),
                     Text(card.gihwrLabel, style: stats),
-                    if (state.pair.isNotEmpty)
-                      if (_betterPair(state, card) case final better?)
-                        _pairBadge(better.$1, better.$2, faded: true),
+                    // The pair this card is best in, so the ceiling is visible
+                    _topPairSlot(context.read<DraftCubit>().state, card),
                   ],
                 ),
               ),
@@ -1301,13 +1523,17 @@ class _DraftViewState extends State<_DraftView> {
         Expanded(child: _buildPool(state.playerPool, state.sideboard, lands: state.lands)),
         _buildVSplitter(),
         SizedBox(
-          width: _rankWidth,
+          width: _panelWidth(state),
           child: LayoutBuilder(
             builder: (context, box) => Column(
               children: [
                 SizedBox(
                   height: splitSize(box.maxHeight, _rankSplit),
-                  child: _buildRankTable(context, 'Your picks', state.playerPool, pickable: false),
+                  child: _rankPair(
+                    state,
+                    _buildRankTable(context, 'Your picks', state.playerPool, pickable: false),
+                    _buildPairTable(context, state, state.playerPool, pickable: false),
+                  ),
                 ),
                 _buildRankSplitter(box.maxHeight),
                 Expanded(child: _buildRankTable(context, 'Sideboard', state.sideboard, pickable: false)),
@@ -1321,14 +1547,10 @@ class _DraftViewState extends State<_DraftView> {
 
 
   List<CardRating> _ranked(List<CardRating> cards) {
-    final state = context.read<DraftCubit>().state;
-    // With a pair selected its win rates drive the order, that's the point of it
-    final pairOn = state.pair.isNotEmpty && state.pairRatings.isNotEmpty;
-    double gih(CardRating c) => pairOn ? (state.pairRatings[c.name] ?? -1) : (c.gihwr ?? -1);
     final sorted = List<CardRating>.from(cards);
     // Missing stats (low sample size) always sort to the bottom
     sorted.sort((a, b) => switch (_rankStat) {
-      RankStat.gihwr => gih(b).compareTo(gih(a)),
+      RankStat.gihwr => (b.gihwr ?? -1).compareTo(a.gihwr ?? -1),
       RankStat.iwd => (b.iwd ?? -9).compareTo(a.iwd ?? -9),
       RankStat.alsa => (a.alsa ?? 99).compareTo(b.alsa ?? 99),
     });

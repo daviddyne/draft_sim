@@ -1,5 +1,4 @@
 import 'dart:math';
-
 import 'package:draft_sim/Models/card_rating.dart';
 import 'package:draft_sim/Services/seventeen_lands_service.dart';
 import 'package:draft_sim/pack_generator.dart';
@@ -20,6 +19,10 @@ class DraftState {
   final Map<String, double> pairRatings;
   // Every pair's ratings, used to spot a card that is better somewhere else
   final Map<String, Map<String, double>> allPairRatings;
+  // Average of the pair's top 20 commons and uncommons, how deep the pair runs
+  final double? pairAverage;
+  // The same figure for every pair, for comparing them in the picker
+  final Map<String, double> pairAverages;
   final int packNumber;
   final int pickNumber;
   final bool finished;
@@ -35,6 +38,8 @@ class DraftState {
     this.pair = '',
     this.pairRatings = const {},
     this.allPairRatings = const {},
+    this.pairAverage,
+    this.pairAverages = const {},
     this.packNumber = 0,
     this.pickNumber = 0,
     this.finished = false,
@@ -54,6 +59,8 @@ class DraftState {
     String? pair,
     Map<String, double>? pairRatings,
     Map<String, Map<String, double>>? allPairRatings,
+    double? pairAverage,
+    Map<String, double>? pairAverages,
     int? packNumber,
     int? pickNumber,
     bool? finished,
@@ -69,6 +76,8 @@ class DraftState {
       pair: pair ?? this.pair,
       pairRatings: pairRatings ?? this.pairRatings,
       allPairRatings: allPairRatings ?? this.allPairRatings,
+      pairAverage: pairAverage ?? this.pairAverage,
+      pairAverages: pairAverages ?? this.pairAverages,
       packNumber: packNumber ?? this.packNumber,
       pickNumber: pickNumber ?? this.pickNumber,
       finished: finished ?? this.finished,
@@ -103,20 +112,14 @@ class DraftCubit extends Cubit<DraftState> {
   // Skipped while the list is fresh, the set list costs several requests
   Future<void> refreshSets() async {
     final last = _setsLoadedAt;
-    if (last != null &&
-        DateTime.now().difference(last) < const Duration(minutes: 30)) {
-      return;
-    }
+    if (last != null && DateTime.now().difference(last) < const Duration(minutes: 30)) return;
     await _loadSets();
   }
 
   // Abandon the current draft and go back to set selection
   void reset() => emit(DraftState(sets: state.sets));
 
-  Future<void> startDraft(
-    String setCode, {
-    String eventType = 'PremierDraft',
-  }) async {
+  Future<void> startDraft(String setCode, {String eventType = 'PremierDraft'}) async {
     emit(DraftState(loading: true, sets: state.sets));
     try {
       _setCode = setCode;
@@ -128,15 +131,15 @@ class DraftCubit extends Cubit<DraftState> {
       try {
         lands = await _service.fetchBasicLands(setCode, eventType: eventType);
       } catch (_) {}
-      emit(
-        DraftState(
-          sets: state.sets,
-          lands: lands,
-          packs: List.generate(seats, (_) => _generator!.generatePack()),
-          packNumber: 1,
-          pickNumber: 1,
-        ),
-      );
+      emit(DraftState(
+        sets: state.sets,
+        lands: lands,
+        packs: List.generate(seats, (_) => _generator!.generatePack()),
+        packNumber: 1,
+        pickNumber: 1,
+      ));
+      // Pair ratings are on by default, the guess improves with every pick
+      setPair(bestPair());
     } catch (e) {
       emit(DraftState(error: e.toString(), sets: state.sets));
     }
@@ -155,49 +158,42 @@ class DraftCubit extends Cubit<DraftState> {
     }
     if (packs[0].isEmpty) {
       if (state.packNumber == packsPerDraft) {
-        emit(
-          state.copyWith(
-            playerPool: pool,
-            sideboard: side,
-            finished: true,
-            packs: [],
-          ),
-        );
+        emit(state.copyWith(playerPool: pool, sideboard: side, finished: true, packs: []));
         return;
       }
-      emit(
-        state.copyWith(
-          packs: List.generate(seats, (_) => _generator!.generatePack()),
-          playerPool: pool,
-          sideboard: side,
-          packNumber: state.packNumber + 1,
-          pickNumber: 1,
-        ),
-      );
-      return;
-    }
-    emit(
-      state.copyWith(
-        packs: _rotate(packs, state.packNumber.isOdd),
+      emit(state.copyWith(
+        packs: List.generate(seats, (_) => _generator!.generatePack()),
         playerPool: pool,
         sideboard: side,
-        pickNumber: state.pickNumber + 1,
-      ),
-    );
+        packNumber: state.packNumber + 1,
+        pickNumber: 1,
+      ));
+      return;
+    }
+    emit(state.copyWith(
+      packs: _rotate(packs, state.packNumber.isOdd),
+      playerPool: pool,
+      sideboard: side,
+      pickNumber: state.pickNumber + 1,
+    ));
+    _autoPair();
   }
 
-  static const pairs = [
-    'WU',
-    'WB',
-    'WR',
-    'WG',
-    'UB',
-    'UR',
-    'UG',
-    'BR',
-    'BG',
-    'RG',
-  ];
+  // Whichever pair has the deepest playables, before any picks say otherwise
+  String _strongestPair() {
+    if (state.pairAverages.isEmpty) return pairs[_random.nextInt(pairs.length)];
+    final ranked = [...state.pairAverages.entries]..sort((a, b) => b.value.compareTo(a.value));
+    return ranked.first.key;
+  }
+
+  // Keeps the pair in step with what is being picked, early on only
+  void _autoPair() {
+    if (state.pair.isEmpty) return;
+    final guess = bestPair();
+    if (guess != state.pair) setPair(guess);
+  }
+
+  static const pairs = ['WU', 'WB', 'WR', 'WG', 'UB', 'UR', 'UG', 'BR', 'BG', 'RG'];
   String _setCode = '';
   String _eventType = 'PremierDraft';
 
@@ -210,50 +206,59 @@ class DraftCubit extends Cubit<DraftState> {
     await setPair(bestPair());
   }
 
+  // Chosen from the dropdown, detection carries on from the next pick
+  Future<void> setPairManually(String pair) async => setPair(pair);
+
   Future<void> setPair(String pair) async {
-    emit(
-      state.copyWith(
-        pair: pair,
-        pairRatings: state.allPairRatings[pair] ?? const {},
-      ),
-    );
-    final ratings =
-        state.allPairRatings[pair] ??
-        await _service.fetchPairRatings(_setCode, _eventType, pair);
-    if (state.pair == pair) emit(state.copyWith(pairRatings: ratings));
+    emit(state.copyWith(pair: pair, pairRatings: state.allPairRatings[pair] ?? const {}));
+    final ratings = state.allPairRatings[pair] ?? await _service.fetchPairRatings(_setCode, _eventType, pair);
+    if (state.pair == pair) {
+      final avg = _pairAverage(ratings);
+      final averages = Map<String, double>.from(state.pairAverages);
+      if (avg != null) averages[pair] = avg;
+      emit(state.copyWith(pairRatings: ratings, pairAverage: avg, pairAverages: averages));
+    }
     _loadAllPairs();
   }
 
   // Fetched once in the background, so the other pairs can be compared against
+  // How strong the pair's playables are, averaged over its best 20 commons
+  // and uncommons. Rares are left out, they can't be counted on.
+  double? _pairAverage(Map<String, double> ratings) {
+    final pool = [...?_generator?.commons, ...?_generator?.uncommons];
+    final rated = [for (final c in pool) ?ratings[c.name]]..sort((a, b) => b.compareTo(a));
+    if (rated.isEmpty) return null;
+    final top = rated.take(20).toList();
+    return top.reduce((a, b) => a + b) / top.length;
+  }
+
   Future<void> _loadAllPairs() async {
     if (state.allPairRatings.length == pairs.length) return;
     final all = Map<String, Map<String, double>>.from(state.allPairRatings);
+    final averages = Map<String, double>.from(state.pairAverages);
     for (final p in pairs) {
       if (all.containsKey(p)) continue;
       all[p] = await _service.fetchPairRatings(_setCode, _eventType, p);
+      if (_pairAverage(all[p]!) case final avg?) averages[p] = avg;
       if (isClosed) return;
-      emit(state.copyWith(allPairRatings: Map.of(all)));
+      emit(state.copyWith(allPairRatings: Map.of(all), pairAverages: Map.of(averages)));
     }
+    _autoPair();
   }
 
   // The pair holding most of the picked cards, weighted by how good they are.
   // With only a few picks many pairs tie, so the result is near arbitrary early on.
   String bestPair() {
-    final pool = state.playerPool
-        .where((c) => !c.isLand && c.color.isNotEmpty)
-        .toList();
-    if (pool.isEmpty) return pairs[_random.nextInt(pairs.length)];
+    final pool = state.playerPool.where((c) => !c.isLand && c.color.isNotEmpty).toList();
+    if (pool.isEmpty) return _strongestPair();
     var best = <String>[];
     var bestCount = -1;
     var bestScore = -1.0;
     for (final pair in pairs) {
-      final cards = pool
-          .where((c) => c.color.split('').every(pair.contains))
-          .toList();
+      final cards = pool.where((c) => c.color.split('').every(pair.contains)).toList();
       // A card above average adds more than a filler card
       final score = cards.fold(0.0, (s, c) => s + ((c.gihwr ?? 0.5) - 0.45));
-      if (cards.length > bestCount ||
-          (cards.length == bestCount && score > bestScore)) {
+      if (cards.length > bestCount || (cards.length == bestCount && score > bestScore)) {
         best = [pair];
         bestCount = cards.length;
         bestScore = score;

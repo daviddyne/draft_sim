@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:draft_sim/Models/card_rating.dart';
 import 'package:draft_sim/Services/arena_log_service.dart';
@@ -15,6 +16,14 @@ class ArenaDraftState {
   final List<CardRating> pack;
   final List<CardRating> pool;
   final List<CardRating> sideboard;
+  // Color pair whose ratings are shown beside the overall ones, empty is off
+  final String pair;
+  final Map<String, double> pairRatings;
+  final Map<String, Map<String, double>> allPairRatings;
+  // Average of the pair's top 20 commons and uncommons, how deep the pair runs
+  final double? pairAverage;
+  // The same figure for every pair, for comparing them in the picker
+  final Map<String, double> pairAverages;
   // Pack cards from the log that couldn't be matched to 17lands data
   final int unknownIds;
   final String unknownInfo;
@@ -28,6 +37,11 @@ class ArenaDraftState {
     this.pack = const [],
     this.pool = const [],
     this.sideboard = const [],
+    this.pair = '',
+    this.pairRatings = const {},
+    this.allPairRatings = const {},
+    this.pairAverage,
+    this.pairAverages = const {},
     this.unknownIds = 0,
     this.unknownInfo = '',
   });
@@ -41,6 +55,11 @@ class ArenaDraftState {
     List<CardRating>? pack,
     List<CardRating>? pool,
     List<CardRating>? sideboard,
+    String? pair,
+    Map<String, double>? pairRatings,
+    Map<String, Map<String, double>>? allPairRatings,
+    double? pairAverage,
+    Map<String, double>? pairAverages,
     int? unknownIds,
     String? unknownInfo,
   }) {
@@ -53,6 +72,11 @@ class ArenaDraftState {
       pack: pack ?? this.pack,
       pool: pool ?? this.pool,
       sideboard: sideboard ?? this.sideboard,
+      pair: pair ?? this.pair,
+      pairRatings: pairRatings ?? this.pairRatings,
+      allPairRatings: allPairRatings ?? this.allPairRatings,
+      pairAverage: pairAverage ?? this.pairAverage,
+      pairAverages: pairAverages ?? this.pairAverages,
       unknownIds: unknownIds ?? this.unknownIds,
       unknownInfo: unknownInfo ?? this.unknownInfo,
     );
@@ -63,6 +87,7 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
   final SeventeenLandsService _service;
   final ArenaLogService _log;
   Map<int, CardRating> _byArenaId = {};
+  final Random _random = Random();
   StreamSubscription? _sub;
   // Events that arrived before the set data finished loading
   List<int> _pendingPack = [];
@@ -174,6 +199,7 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
       if (i >= 0) pack.removeAt(i);
     }
     emit(state.copyWith(pool: cards, pack: pack));
+    _autoPair();
   }
 
   // A deck line can hold several arrays, so pick the one that behaves like a deck:
@@ -318,6 +344,133 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
     if (_deckApplied) return;
     final pack = List<CardRating>.from(state.pack)..remove(card);
     emit(state.copyWith(pool: [...state.pool, card], pack: pack));
+    _autoPair();
+  }
+
+  static const pairs = [
+    'WU',
+    'WB',
+    'WR',
+    'WG',
+    'UB',
+    'UR',
+    'UG',
+    'BR',
+    'BG',
+    'RG',
+  ];
+  Future<void> togglePair() async {
+    if (state.pair.isNotEmpty) {
+      emit(state.copyWith(pair: '', pairRatings: const {}));
+      return;
+    }
+    await setPair(bestPair());
+  }
+
+  // Chosen from the dropdown, detection carries on from the next pick
+  Future<void> setPairManually(String pair) async => setPair(pair);
+
+  Future<void> setPair(String pair) async {
+    emit(
+      state.copyWith(
+        pair: pair,
+        pairRatings: state.allPairRatings[pair] ?? const {},
+      ),
+    );
+    final ratings =
+        state.allPairRatings[pair] ??
+        await _service.fetchPairRatings(state.setCode, state.eventType, pair);
+    if (state.pair == pair) {
+      final avg = _pairAverage(ratings);
+      final averages = Map<String, double>.from(state.pairAverages);
+      if (avg != null) averages[pair] = avg;
+      emit(
+        state.copyWith(
+          pairRatings: ratings,
+          pairAverage: avg,
+          pairAverages: averages,
+        ),
+      );
+    }
+    _loadAllPairs();
+  }
+
+  // Fetched in the background so other pairs can be compared against
+  // How strong the pair's playables are, averaged over its best 20 commons
+  // and uncommons. Rares are left out, they can't be counted on.
+  double? _pairAverage(Map<String, double> ratings) {
+    final pool = _byArenaId.values
+        .where((c) => c.rarity == 'common' || c.rarity == 'uncommon')
+        .toList();
+    final rated = [for (final c in pool) ?ratings[c.name]]
+      ..sort((a, b) => b.compareTo(a));
+    if (rated.isEmpty) return null;
+    final top = rated.take(20).toList();
+    return top.reduce((a, b) => a + b) / top.length;
+  }
+
+  Future<void> _loadAllPairs() async {
+    if (state.allPairRatings.length == pairs.length) return;
+    final all = Map<String, Map<String, double>>.from(state.allPairRatings);
+    final averages = Map<String, double>.from(state.pairAverages);
+    for (final p in pairs) {
+      if (all.containsKey(p)) continue;
+      all[p] = await _service.fetchPairRatings(
+        state.setCode,
+        state.eventType,
+        p,
+      );
+      if (_pairAverage(all[p]!) case final avg?) averages[p] = avg;
+      if (isClosed) return;
+      emit(
+        state.copyWith(
+          allPairRatings: Map.of(all),
+          pairAverages: Map.of(averages),
+        ),
+      );
+    }
+    _autoPair();
+  }
+
+  // The pair holding most of the picked cards, weighted by how good they are
+  String bestPair() {
+    final pool = state.pool
+        .where((c) => !c.isLand && c.color.isNotEmpty)
+        .toList();
+    if (pool.isEmpty) return _strongestPair();
+    var best = <String>[];
+    var bestCount = -1;
+    var bestScore = -1.0;
+    for (final pair in pairs) {
+      final cards = pool
+          .where((c) => c.color.split('').every(pair.contains))
+          .toList();
+      final score = cards.fold(0.0, (s, c) => s + ((c.gihwr ?? 0.5) - 0.45));
+      if (cards.length > bestCount ||
+          (cards.length == bestCount && score > bestScore)) {
+        best = [pair];
+        bestCount = cards.length;
+        bestScore = score;
+      } else if (cards.length == bestCount && score == bestScore) {
+        best.add(pair);
+      }
+    }
+    return best[_random.nextInt(best.length)];
+  }
+
+  // Whichever pair has the deepest playables, before any picks say otherwise
+  String _strongestPair() {
+    if (state.pairAverages.isEmpty) return pairs[_random.nextInt(pairs.length)];
+    final ranked = [...state.pairAverages.entries]
+      ..sort((a, b) => b.value.compareTo(a.value));
+    return ranked.first.key;
+  }
+
+  // Keeps the pair in step with what is being picked, early on only
+  void _autoPair() {
+    if (state.pair.isEmpty) return;
+    final guess = bestPair();
+    if (guess != state.pair) setPair(guess);
   }
 
   // Wipes what was tracked so a new draft doesn't inherit the previous one

@@ -12,6 +12,14 @@ class BrowseState {
   final List<SetOption> available;
   // Basic lands, so a deck can include them
   final List<CardRating> lands;
+  // Color pair whose ratings are shown beside the overall ones, empty is off
+  final String pair;
+  final Map<String, double> pairRatings;
+  final Map<String, Map<String, double>> allPairRatings;
+  // Average of the pair's top 20 commons and uncommons, how deep the pair runs
+  final double? pairAverage;
+  // The same figure for every pair, for comparing them in the picker
+  final Map<String, double> pairAverages;
 
   const BrowseState({
     this.loading = false,
@@ -20,6 +28,11 @@ class BrowseState {
     this.setCodes = const [],
     this.available = const [],
     this.lands = const [],
+    this.pair = '',
+    this.pairRatings = const {},
+    this.allPairRatings = const {},
+    this.pairAverage,
+    this.pairAverages = const {},
   });
 
   BrowseState copyWith({
@@ -29,6 +42,11 @@ class BrowseState {
     List<String>? setCodes,
     List<SetOption>? available,
     List<CardRating>? lands,
+    String? pair,
+    Map<String, double>? pairRatings,
+    Map<String, Map<String, double>>? allPairRatings,
+    double? pairAverage,
+    Map<String, double>? pairAverages,
   }) {
     return BrowseState(
       loading: loading ?? this.loading,
@@ -37,6 +55,11 @@ class BrowseState {
       setCodes: setCodes ?? this.setCodes,
       available: available ?? this.available,
       lands: lands ?? this.lands,
+      pair: pair ?? this.pair,
+      pairRatings: pairRatings ?? this.pairRatings,
+      allPairRatings: allPairRatings ?? this.allPairRatings,
+      pairAverage: pairAverage ?? this.pairAverage,
+      pairAverages: pairAverages ?? this.pairAverages,
     );
   }
 }
@@ -51,11 +74,101 @@ class BrowseCubit extends Cubit<BrowseState> {
 
   Future<void> load(String setCode, String eventType) async {
     _eventType = eventType;
+    _setCode = setCode;
     emit(state.copyWith(loading: true, setCodes: [setCode]));
     await _fetch(setCode);
     _publish();
     _loadAvailable();
     _loadLands(setCode);
+  }
+
+  static const pairs = ['WU', 'WB', 'WR', 'WG', 'UB', 'UR', 'UG', 'BR', 'BG', 'RG'];
+  String _setCode = '';
+
+  Future<void> togglePair(List<CardRating> deck) async {
+    if (state.pair.isNotEmpty) {
+      emit(state.copyWith(pair: '', pairRatings: const {}));
+      return;
+    }
+    await setPair(bestPair(deck));
+  }
+
+  // Chosen from the dropdown, detection carries on as the deck changes
+  Future<void> setPairManually(String pair) async => setPair(pair);
+
+  // Whichever pair has the deepest playables, before any cards say otherwise
+  String _strongestPair() {
+    if (state.pairAverages.isEmpty) return pairs.first;
+    final ranked = [...state.pairAverages.entries]..sort((a, b) => b.value.compareTo(a.value));
+    return ranked.first.key;
+  }
+
+  // The deck as last seen, so the guess can be redone when ratings arrive
+  List<CardRating> _lastDeck = const [];
+
+  // Called whenever the deck changes, keeps the pair in step with it
+  void autoPair(List<CardRating> deck) {
+    _lastDeck = deck;
+    if (state.pair.isEmpty) return;
+    final guess = bestPair(deck);
+    if (guess != state.pair) setPair(guess);
+  }
+
+  Future<void> setPair(String pair) async {
+    emit(state.copyWith(pair: pair, pairRatings: state.allPairRatings[pair] ?? const {}));
+    final ratings = state.allPairRatings[pair] ?? await _service.fetchPairRatings(_setCode, _eventType, pair);
+    if (state.pair == pair) {
+      final avg = _pairAverage(ratings);
+      final averages = Map<String, double>.from(state.pairAverages);
+      if (avg != null) averages[pair] = avg;
+      emit(state.copyWith(pairRatings: ratings, pairAverage: avg, pairAverages: averages));
+    }
+    _loadAllPairs();
+  }
+
+  // How strong the pair's playables are, averaged over its best 20 commons
+  // and uncommons. Rares are left out, they can't be counted on.
+  double? _pairAverage(Map<String, double> ratings) {
+    final pool = state.cards.where((c) => c.rarity == 'common' || c.rarity == 'uncommon').toList();
+    final rated = [for (final c in pool) ?ratings[c.name]]..sort((a, b) => b.compareTo(a));
+    if (rated.isEmpty) return null;
+    final top = rated.take(20).toList();
+    return top.reduce((a, b) => a + b) / top.length;
+  }
+
+  Future<void> _loadAllPairs() async {
+    if (state.allPairRatings.length == pairs.length) return;
+    final all = Map<String, Map<String, double>>.from(state.allPairRatings);
+    final averages = Map<String, double>.from(state.pairAverages);
+    for (final p in pairs) {
+      if (all.containsKey(p)) continue;
+      all[p] = await _service.fetchPairRatings(_setCode, _eventType, p);
+      if (_pairAverage(all[p]!) case final avg?) averages[p] = avg;
+      if (isClosed) return;
+      emit(state.copyWith(allPairRatings: Map.of(all), pairAverages: Map.of(averages)));
+    }
+    autoPair(_lastDeck);
+  }
+
+  // The pair holding most of the deck, weighted by how good those cards are
+  String bestPair(List<CardRating> deck) {
+    final pool = deck.where((c) => !c.isLand && c.color.isNotEmpty).toList();
+    if (pool.isEmpty) return _strongestPair();
+    var best = <String>[];
+    var bestCount = -1;
+    var bestScore = -1.0;
+    for (final pair in pairs) {
+      final cards = pool.where((c) => c.color.split('').every(pair.contains)).toList();
+      final score = cards.fold(0.0, (s, c) => s + ((c.gihwr ?? 0.5) - 0.45));
+      if (cards.length > bestCount || (cards.length == bestCount && score > bestScore)) {
+        best = [pair];
+        bestCount = cards.length;
+        bestScore = score;
+      } else if (cards.length == bestCount && score == bestScore) {
+        best.add(pair);
+      }
+    }
+    return best.first;
   }
 
   Future<void> _loadLands(String setCode) async {
@@ -121,6 +234,9 @@ class BrowseCubit extends Cubit<BrowseState> {
     return events.contains(_eventType) ? _eventType : events.first;
   }
 
+  // Pair ratings are on by default, once there are cards to rate
+  bool _pairStarted = false;
+
   // One list from every selected set, keeping the first copy of a repeated card
   void _publish() {
     final seen = <String>{};
@@ -131,5 +247,9 @@ class BrowseCubit extends Cubit<BrowseState> {
       }
     }
     emit(state.copyWith(loading: false, cards: cards));
+    if (!_pairStarted && cards.isNotEmpty) {
+      _pairStarted = true;
+      setPair(bestPair(const []));
+    }
   }
 }
