@@ -376,6 +376,50 @@ class _DraftViewState extends State<_DraftView> {
     }
   }
 
+  // The newest sets in one go, skipping ones already downloaded
+  Future<void> _downloadLatest(List<SetOption> sets, int count) async {
+    if (_downloading) return;
+    final wanted = sets.take(count).toList();
+    setState(() {
+      _downloading = true;
+      _downloadStatus = 'Downloading ${wanted.length} sets...';
+    });
+    var done = 0;
+    var failed = 0;
+    for (final set in wanted) {
+      if (!mounted) return;
+      final already = _cached.any((c) => c.setCode == set.code);
+      if (already) {
+        done++;
+        continue;
+      }
+      setState(() => _downloadStatus = '${set.code} (${done + failed + 1} of ${wanted.length})');
+      try {
+        await _downloadService.downloadSet(
+          set.code,
+          _eventType,
+          onProgress: (imgDone, total) {
+            if (mounted) {
+              setState(() => _downloadStatus = '${set.code} images $imgDone/$total '
+                  '(${done + failed + 1} of ${wanted.length})');
+            }
+          },
+        );
+        done++;
+      } catch (_) {
+        // A set without data for any format just gets skipped
+        failed++;
+      }
+      await _refreshCached();
+    }
+    if (mounted) {
+      setState(() {
+        _downloading = false;
+        _downloadStatus = 'Downloaded $done sets${failed > 0 ? ', $failed unavailable' : ''}';
+      });
+    }
+  }
+
   Future<void> _downloadSet() async {
     final code = _setController.text.trim();
     if (code.isEmpty || _downloading) return;
@@ -852,6 +896,14 @@ class _DraftViewState extends State<_DraftView> {
             icon: const Icon(Icons.download),
             label: const Text('Download set for offline use'),
           ),
+          if (sets.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _downloading ? null : () => _downloadLatest(sets, 20),
+              icon: const Icon(Icons.download_for_offline_outlined),
+              label: const Text('Download 20 latest sets'),
+            ),
+          ],
           if (_downloadStatus != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),

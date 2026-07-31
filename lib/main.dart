@@ -6,10 +6,16 @@ import 'package:flutter/material.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Opens the local stores before anything reads a downloaded set
-  await CardCacheService.init();
-  // On web, asks the browser to keep downloads instead of clearing them
-  await requestPersistentStorage();
+  // Storage problems must not stop the app starting, a blank screen would give
+  // no clue about what went wrong
+  try {
+    // Opens the local stores before anything reads a downloaded set
+    await CardCacheService.init();
+    // On web, asks the browser to keep downloads instead of clearing them
+    await requestPersistentStorage();
+  } catch (e) {
+    debugPrint('Local storage unavailable: $e');
+  }
   runApp(const DraftSimApp());
 }
 
@@ -21,7 +27,10 @@ class DraftSimApp extends StatelessWidget {
     return MaterialApp(
       title: '17lands Draft Sim',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(colorSchemeSeed: Colors.deepPurple, brightness: Brightness.dark),
+      theme: ThemeData(
+        colorSchemeSeed: Colors.deepPurple,
+        brightness: Brightness.dark,
+      ),
       home: const DraftScreen(),
     );
   }
