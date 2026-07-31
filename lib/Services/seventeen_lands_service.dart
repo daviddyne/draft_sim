@@ -16,6 +16,9 @@ class SetOption {
 }
 
 class SeventeenLandsService {
+  // Why the last pair fetch came back empty, shown in the app so a missing
+  // file or a bad path doesn't just look like missing data
+  static String lastPairNote = '';
   static const pairs = ['WU', 'WB', 'WR', 'WG', 'UB', 'UR', 'UG', 'BR', 'BG', 'RG'];
   static const _base = 'https://www.17lands.com/api/card_data';
   static const _expansions = 'https://www.17lands.com/data/expansions';
@@ -60,7 +63,10 @@ class SeventeenLandsService {
       if (stored != null && stored.isNotEmpty) return stored;
       final uri = _cardDataUrl(setCode, eventType, 'ALL_TIME', colors: colors);
       final response = await http.get(uri).timeout(_timeout);
-      if (response.statusCode != 200) return const {};
+      if (response.statusCode != 200) {
+        lastPairNote = '$uri returned ${response.statusCode}';
+        return const {};
+      }
       final body = jsonDecode(response.body);
       final list = (body is Map ? body['data'] : body) as List?;
       if (list == null) return const {};
@@ -72,9 +78,14 @@ class SeventeenLandsService {
         final wr = (row['ever_drawn_win_rate'] ?? row['gihwr']) as num?;
         if (name.isNotEmpty && wr != null) out[name] = wr.toDouble();
       }
-      if (out.isNotEmpty) await cache.savePairRatings(setCode, eventType, colors, out);
+      if (out.isNotEmpty) {
+        await cache.savePairRatings(setCode, eventType, colors, out);
+      } else {
+        lastPairNote = '$uri had no ratings';
+      }
       return out;
-    } catch (_) {
+    } catch (e) {
+      lastPairNote = 'pair fetch failed: $e';
       return const {};
     }
   }

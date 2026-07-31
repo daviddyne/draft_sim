@@ -409,11 +409,16 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
     return top.reduce((a, b) => a + b) / top.length;
   }
 
+  // Loading is one pass, re-entering it would clear the ratings on every cycle
+  bool _loadingAllPairs = false;
+
   Future<void> _loadAllPairs() async {
+    if (_loadingAllPairs) return;
     final missing = pairs
-        .where((p) => (state.allPairRatings[p] ?? const {}).isEmpty)
+        .where((p) => !state.allPairRatings.containsKey(p))
         .toList();
     if (missing.isEmpty) return;
+    _loadingAllPairs = true;
     // A few at a time, ten sequential requests made switching pairs sluggish
     const batch = 5;
     for (var i = 0; i < missing.length; i += batch) {
@@ -423,7 +428,10 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
         for (final p in slice)
           _service.fetchPairRatings(state.setCode, state.eventType, p),
       ]);
-      if (isClosed) return;
+      if (isClosed) {
+        _loadingAllPairs = false;
+        return;
+      }
       final all = Map<String, Map<String, double>>.from(state.allPairRatings);
       final averages = Map<String, double>.from(state.pairAverages);
       for (var j = 0; j < slice.length; j++) {
@@ -432,6 +440,7 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
       }
       emit(state.copyWith(allPairRatings: all, pairAverages: averages));
     }
+    _loadingAllPairs = false;
     _autoPair();
   }
 

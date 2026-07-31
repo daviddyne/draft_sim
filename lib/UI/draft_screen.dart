@@ -972,9 +972,22 @@ class _DraftViewState extends State<_DraftView> {
               ),
             if (showHeader) const Divider(height: 1),
             Expanded(
-              child: ranked.isEmpty
-                  ? const Center(child: Text('Nothing yet'))
-                  : ListView.builder(
+              child: state.pairRatings.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Text(
+                          SeventeenLandsService.lastPairNote.isEmpty
+                              ? 'Loading pair ratings...'
+                              : 'No pair data\n${SeventeenLandsService.lastPairNote}',
+                          textAlign: TextAlign.center,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                    )
+                  : ranked.isEmpty
+                      ? const Center(child: Text('Nothing yet'))
+                      : ListView.builder(
                       itemCount: ranked.length,
                       itemBuilder: (context, i) => _pairRow(context, state, i + 1, ranked[i], pickable: pickable),
                     ),
