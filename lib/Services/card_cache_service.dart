@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:draft_sim/Models/card_rating.dart';
-import 'package:hive_ce_flutter/adapters.dart';
 
+import 'package:draft_sim/Models/card_rating.dart';
+import 'package:hive_ce_flutter/hive_flutter.dart';
 
 class CachedSet {
   final String setCode;
@@ -10,7 +10,12 @@ class CachedSet {
   final int cardCount;
   final DateTime downloaded;
 
-  const CachedSet(this.setCode, this.eventType, this.cardCount, this.downloaded);
+  const CachedSet(
+    this.setCode,
+    this.eventType,
+    this.cardCount,
+    this.downloaded,
+  );
 }
 
 // Stores downloaded sets in Hive, which is files on desktop and IndexedDB on web
@@ -43,19 +48,65 @@ class CardCacheService {
     return cardName.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '_');
   }
 
-  Future<void> save(String setCode, String eventType, List<CardRating> cards, {bool lands = false}) async {
-    await _sets.put(_key(setCode, eventType, lands: lands), jsonEncode([for (final c in cards) c.toCache()]));
+  Future<void> save(
+    String setCode,
+    String eventType,
+    List<CardRating> cards, {
+    bool lands = false,
+  }) async {
+    await _sets.put(
+      _key(setCode, eventType, lands: lands),
+      jsonEncode([for (final c in cards) c.toCache()]),
+    );
     if (!lands) {
-      await _meta.put(_key(setCode, eventType), DateTime.now().toIso8601String());
+      await _meta.put(
+        _key(setCode, eventType),
+        DateTime.now().toIso8601String(),
+      );
     }
   }
 
-  Future<List<CardRating>?> load(String setCode, String eventType, {bool lands = false}) async {
+  Future<List<CardRating>?> load(
+    String setCode,
+    String eventType, {
+    bool lands = false,
+  }) async {
     final raw = _sets.get(_key(setCode, eventType, lands: lands));
     if (raw == null) return null;
     try {
       final list = jsonDecode(raw) as List;
-      return [for (final e in list) CardRating.fromCache(e as Map<String, dynamic>)];
+      return [
+        for (final e in list) CardRating.fromCache(e as Map<String, dynamic>),
+      ];
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Pair ratings are small, name to win rate, so they are always kept once seen
+  String _pairKey(String setCode, String eventType, String pair) =>
+      '${setCode.toUpperCase()}_${eventType}_pair_$pair';
+
+  Future<void> savePairRatings(
+    String setCode,
+    String eventType,
+    String pair,
+    Map<String, double> ratings,
+  ) async {
+    await _sets.put(_pairKey(setCode, eventType, pair), jsonEncode(ratings));
+  }
+
+  Map<String, double>? loadPairRatings(
+    String setCode,
+    String eventType,
+    String pair,
+  ) {
+    final raw = _sets.get(_pairKey(setCode, eventType, pair));
+    if (raw == null) return null;
+    try {
+      return (jsonDecode(raw) as Map).map(
+        (k, v) => MapEntry(k as String, (v as num).toDouble()),
+      );
     } catch (_) {
       return null;
     }
@@ -74,7 +125,9 @@ class CardCacheService {
       } catch (_) {
         continue;
       }
-      final when = DateTime.tryParse(_meta.get(key) ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final when =
+          DateTime.tryParse(_meta.get(key) ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
       result.add(CachedSet(parts[0], parts[1], count, when));
     }
     result.sort((a, b) => b.downloaded.compareTo(a.downloaded));
@@ -84,10 +137,17 @@ class CardCacheService {
   // Removes the set and the art of the cards it contains
   Future<void> delete(String setCode, String eventType) async {
     final cards = await load(setCode, eventType) ?? const <CardRating>[];
-    final lands = await load(setCode, eventType, lands: true) ?? const <CardRating>[];
-    await _images.deleteAll([for (final c in [...cards, ...lands]) imageKey(c.name)]);
+    final lands =
+        await load(setCode, eventType, lands: true) ?? const <CardRating>[];
+    await _images.deleteAll([
+      for (final c in [...cards, ...lands]) imageKey(c.name),
+    ]);
     await _sets.delete(_key(setCode, eventType));
     await _sets.delete(_key(setCode, eventType, lands: true));
+    final pairPrefix = '${setCode.toUpperCase()}_${eventType}_pair_';
+    await _sets.deleteAll(
+      _sets.keys.cast<String>().where((k) => k.startsWith(pairPrefix)).toList(),
+    );
     await _meta.delete(_key(setCode, eventType));
   }
 

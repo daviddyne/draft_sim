@@ -78,7 +78,7 @@ class BrowseCubit extends Cubit<BrowseState> {
     emit(state.copyWith(loading: true, setCodes: [setCode]));
     await _fetch(setCode);
     _publish();
-    _loadAvailable();
+    loadAvailable();
     _loadLands(setCode);
   }
 
@@ -137,18 +137,27 @@ class BrowseCubit extends Cubit<BrowseState> {
   }
 
   Future<void> _loadAllPairs() async {
-    if (state.allPairRatings.length == pairs.length) return;
-    final all = Map<String, Map<String, double>>.from(state.allPairRatings);
-    final averages = Map<String, double>.from(state.pairAverages);
-    for (final p in pairs) {
-      if (all.containsKey(p)) continue;
-      all[p] = await _service.fetchPairRatings(_setCode, _eventType, p);
-      if (_pairAverage(all[p]!) case final avg?) averages[p] = avg;
+    final missing = pairs.where((p) => !state.allPairRatings.containsKey(p)).toList();
+    if (missing.isEmpty) return;
+    // A few at a time, ten sequential requests made switching pairs sluggish
+    const batch = 5;
+    for (var i = 0; i < missing.length; i += batch) {
+      final slice = missing.skip(i).take(batch).toList();
+      final results = await Future.wait([
+        for (final p in slice) _service.fetchPairRatings(_setCode, _eventType, p),
+      ]);
       if (isClosed) return;
-      emit(state.copyWith(allPairRatings: Map.of(all), pairAverages: Map.of(averages)));
+      final all = Map<String, Map<String, double>>.from(state.allPairRatings);
+      final averages = Map<String, double>.from(state.pairAverages);
+      for (var j = 0; j < slice.length; j++) {
+        all[slice[j]] = results[j];
+        if (_pairAverage(results[j]) case final avg?) averages[slice[j]] = avg;
+      }
+      emit(state.copyWith(allPairRatings: all, pairAverages: averages));
     }
     autoPair(_lastDeck);
   }
+
 
   // The pair holding most of the deck, weighted by how good those cards are
   String bestPair(List<CardRating> deck) {
@@ -179,11 +188,12 @@ class BrowseCubit extends Cubit<BrowseState> {
     }
   }
 
-  Future<void> _loadAvailable() async {
+  Future<void> loadAvailable() async {
     try {
       emit(state.copyWith(available: await _service.fetchSets()));
-    } catch (_) {
-      // The picker just stays limited to what is already loaded
+    } catch (e) {
+      // Shown in the picker so an empty list isn't a mystery
+      emit(state.copyWith(error: 'Could not load the set list: $e'));
     }
   }
 

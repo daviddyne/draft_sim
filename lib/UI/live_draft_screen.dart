@@ -33,6 +33,8 @@ class _LiveViewState extends State<_LiveView> {
   double _zoomSize = 350;
   bool _zoomEnabled = true;
   double _rankWidth = 420;
+  // Cards dragged to another cost column, keyed by card name
+  final Map<String, int> _costOverride = {};
   // The overall ranking can be hidden to leave the pair ranking alone
   bool _showSolo = true;
   // The pair table has its own width, so its splitter leaves the first table alone
@@ -112,38 +114,39 @@ class _LiveViewState extends State<_LiveView> {
                   onPressed: () => context.read<ArenaDraftCubit>().togglePair(),
                 ),
                 if (state.pair.isNotEmpty)
-                  SizedBox(
-                    // Wide enough for the dots and a percentage, so the menu can't overflow
-                    width: 108,
-                    child: DropdownButton<String>(
-                      value: state.pair,
-                      isExpanded: true,
-                      underline: const SizedBox.shrink(),
-                      // Strongest pair first, so the menu doubles as a ranking
-                      selectedItemBuilder: (context) => [
-                        for (final p in _pairsByRating(state))
-                          Align(alignment: Alignment.centerLeft, child: _pairDots(p, size: 12)),
-                      ],
-                      items: [
-                        for (final p in _pairsByRating(state))
-                          DropdownMenuItem(
-                            value: p,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                _pairDots(p, size: 12),
-                                const SizedBox(width: 4),
-                                Text(
-                                  state.pairAverages[p] == null
-                                      ? '-'
-                                      : '${(state.pairAverages[p]! * 100).toStringAsFixed(1)}%',
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                              ],
-                            ),
+                  PopupMenuButton<String>(
+                    tooltip: 'Choose color pair',
+                    // A popup sizes its own menu, so the button stays as small as the dots
+                    onSelected: (v) => context.read<ArenaDraftCubit>().setPairManually(v),
+                    itemBuilder: (context) => [
+                      for (final p in _pairsByRating(state))
+                        PopupMenuItem(
+                          value: p,
+                          height: 34,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _pairDots(p, size: 12),
+                              const SizedBox(width: 6),
+                              Text(
+                                state.pairAverages[p] == null
+                                    ? '-'
+                                    : '${(state.pairAverages[p]! * 100).toStringAsFixed(1)}%',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ],
                           ),
-                      ],
-                      onChanged: (v) => v == null ? null : context.read<ArenaDraftCubit>().setPairManually(v),
+                        ),
+                    ],
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _pairDots(state.pair, size: 12),
+                          const Icon(Icons.arrow_drop_down, size: 18),
+                        ],
+                      ),
                     ),
                   ),
               ],
@@ -608,7 +611,10 @@ class _LiveViewState extends State<_LiveView> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text(card.gihwrLabel, style: stats),
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: Text(card.gihwrLabel, style: stats),
+                  ),
                   // The pair this card is best in, so the ceiling is visible
                   _topPairSlot(context.read<ArenaDraftCubit>().state, card),
                 ],
@@ -672,11 +678,17 @@ class _LiveViewState extends State<_LiveView> {
         children: [
           SizedBox(
             width: splitSize(constraints.maxWidth, _doneSplit),
-            child: _curve(_colorFiltered(pool), showTargets: true, emptyText: 'No picks tracked yet'),
+            child: _curve(_colorFiltered(pool),
+                showTargets: true,
+                emptyText: 'No picks tracked yet',
+                onSecondary: context.read<ArenaDraftCubit>().toSideboard),
           ),
           _buildDoneSplitter(constraints.maxWidth),
           Expanded(
-            child: _curve(_colorFiltered(sideboard), showTargets: false, emptyText: 'Sideboard follows your Arena deck'),
+            child: _curve(_colorFiltered(sideboard),
+                showTargets: false,
+                emptyText: 'Sideboard follows your Arena deck',
+                onSecondary: context.read<ArenaDraftCubit>().toPool),
           ),
         ],
       ),
@@ -711,19 +723,23 @@ class _LiveViewState extends State<_LiveView> {
   // Curve view: lands far left, columns by cost with spells on top, creatures below
   // Cards scale to fit so every column from lands to 6+ stays visible
   // Read only, the split mirrors the deck built in Arena
-  Widget _curve(List<CardRating> cards, {required bool showTargets, required String emptyText}) {
+  Widget _curve(List<CardRating> cards, {
+    required bool showTargets,
+    required String emptyText,
+    void Function(CardRating)? onSecondary,
+  }) {
     if (cards.isEmpty) return Center(child: Text(emptyText));
     final lands = _sortedPool(cards.where((c) => c.isLand).toList());
     final costs = List.generate(7, (i) => i);
-    final spellRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && !x.isCreature && x.costBucket == c).toList())];
-    final creatureRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && x.isCreature && x.costBucket == c).toList())];
+    final spellRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && !x.isCreature && _bucketOf(x) == c).toList())];
+    final creatureRows = [for (final c in costs) _sortedPool(cards.where((x) => !x.isLand && x.isCreature && _bucketOf(x) == c).toList())];
     int maxLen(List<List<CardRating>> rows) => rows.fold(0, (m, r) => r.length > m ? r.length : m);
     final maxTop = maxLen(spellRows);
     final maxBottom = maxLen([creatureRows, [lands]].expand((e) => e).toList());
     final totalCreatures = creatureRows.fold(0, (s, r) => s + r.length);
     final totalSpells = spellRows.fold(0, (s, r) => s + r.length);
     final nonLands = cards.where((c) => !c.isLand).toList();
-    final avgCost = nonLands.isEmpty ? null : nonLands.fold(0, (s, c) => s + c.cmc) / nonLands.length;
+    final avgCost = nonLands.isEmpty ? null : nonLands.fold(0.0, (s, c) => s + _costOf(c)) / nonLands.length;
     return LayoutBuilder(
       builder: (context, box) {
         // Dragged almost shut, nothing sensible fits, so draw nothing
@@ -745,7 +761,7 @@ class _LiveViewState extends State<_LiveView> {
                   if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
                   SizedBox(
                     height: bottomH,
-                    child: Align(alignment: Alignment.bottomCenter, child: _cardStack(lands, w, offset)),
+                    child: Align(alignment: Alignment.bottomCenter, child: _cardStack(lands, w, offset, onSecondary)),
                   ),
                   _columnLabel('Lands', lands.length, showTargets ? (16, 18) : null),
                 ],
@@ -753,24 +769,28 @@ class _LiveViewState extends State<_LiveView> {
             ),
             for (final c in costs)
               Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                // Dropping a card here counts it as this cost from now on
+                child: DragTarget<CardRating>(
+                  onAcceptWithDetails: (d) => setState(() => _costOverride[d.data.name] = c),
+                  builder: (context, candidate, rejected) => Column(
+                    mainAxisSize: MainAxisSize.min,
                   children: [
                     if (topH > 0)
                       SizedBox(
                         height: topH,
-                        child: Align(alignment: Alignment.bottomCenter, child: _cardStack(spellRows[c], w, offset)),
+                        child: Align(alignment: Alignment.bottomCenter, child: _cardStack(spellRows[c], w, offset, onSecondary, draggable: showTargets)),
                       ),
                     if (showTargets && topH > 0) _rowCount(spellRows[c].length, _spellRange(c)),
                     if (topH > 0 && bottomH > 0) const SizedBox(height: 4),
                     if (bottomH > 0)
                       SizedBox(
                         height: bottomH,
-                        child: Align(alignment: Alignment.bottomCenter, child: _cardStack(creatureRows[c], w, offset)),
+                        child: Align(alignment: Alignment.bottomCenter, child: _cardStack(creatureRows[c], w, offset, onSecondary, draggable: showTargets)),
                       ),
                     if (showTargets && bottomH > 0) _rowCount(creatureRows[c].length, _creatureRange(c)),
                     Text(c == 6 ? '6+' : '$c'),
-                  ],
+                    ],
+                  ),
                 ),
               ),
           ],
@@ -805,6 +825,27 @@ class _LiveViewState extends State<_LiveView> {
     );
   }
 
+  // Cost the deck should count this card as, after any manual move
+  int _bucketOf(CardRating card) => _costOverride[card.name] ?? card.costBucket;
+
+  double _costOf(CardRating card) => (_costOverride[card.name] ?? card.cmc).toDouble();
+
+  // Cards can be dragged sideways onto another cost column, which overrides the
+  // cost used for the curve and the average
+  Widget _maybeDraggable(CardRating card, double w, bool enabled, Widget child) {
+    if (!enabled) return child;
+    return Draggable<CardRating>(
+      data: card,
+      affinity: Axis.horizontal,
+      feedback: Opacity(
+        opacity: 0.85,
+        child: SizedBox(width: w, child: cardImage(card, width: w, decodeWidth: w)),
+      ),
+      childWhenDragging: Opacity(opacity: 0.3, child: child),
+      child: child,
+    );
+  }
+
   // Largest card width that keeps all eight columns and both rows in view
   double _fitCardWidth(BoxConstraints box, int maxTop, int maxBottom, bool showTargets) {
     const columns = 8;
@@ -820,7 +861,8 @@ class _LiveViewState extends State<_LiveView> {
   }
 
   // Cards stacked with their title bars visible
-  Widget _cardStack(List<CardRating> cards, double w, double offset) {
+  Widget _cardStack(List<CardRating> cards, double w, double offset, void Function(CardRating)? onSecondary,
+      {bool draggable = false}) {
     if (cards.isEmpty) return SizedBox(width: w);
     final h = w * 1.4 + (cards.length - 1) * offset;
     return SizedBox(
@@ -831,13 +873,21 @@ class _LiveViewState extends State<_LiveView> {
           for (var i = 0; i < cards.length; i++)
             Positioned(
               top: i * offset,
-              child: HoverZoom(
-                card: cards[i],
-                zoomWidth: _zoomSize,
-                enabled: _zoomEnabled,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(6),
-                  child: cardImage(cards[i], width: w, decodeWidth: w),
+              child: _maybeDraggable(
+                cards[i],
+                w,
+                draggable,
+                HoverZoom(
+                  card: cards[i],
+                  zoomWidth: _zoomSize,
+                  enabled: _zoomEnabled,
+                  child: CardGestures(
+                    onSecondary: onSecondary == null ? null : () => onSecondary(cards[i]),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: cardImage(cards[i], width: w, decodeWidth: w),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -875,11 +925,10 @@ class _LiveViewState extends State<_LiveView> {
   // Small count under a stack, green while inside the recommended range
   Widget _rowCount(int count, (int, int)? range) {
     if (range == null) return const SizedBox(height: 14);
-    final ok = count >= range.$1 && count <= range.$2;
     return SizedBox(
       height: 14,
       child: Text('$count/${_rangeLabel(range)}',
-          style: TextStyle(fontSize: 10, color: ok ? const Color(0xFF4CAF6D) : null)),
+          style: TextStyle(fontSize: 10, color: _rangeColor(count, range))),
     );
   }
 
@@ -887,15 +936,22 @@ class _LiveViewState extends State<_LiveView> {
   // brackets, green while inside it
   Widget _columnLabel(String label, int count, (int, int)? range) {
     if (range == null) return Text(label);
-    final ok = count >= range.$1 && count <= range.$2;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(label),
         Text('$count/${_rangeLabel(range)}',
-            style: TextStyle(fontSize: 11, color: ok ? const Color(0xFF4CAF6D) : null)),
+            style: TextStyle(fontSize: 11, color: _rangeColor(count, range))),
       ],
     );
+  }
+
+  // Red outside the range, yellow inside it, green on the recommended amount
+  Color _rangeColor(int count, (int, int) range) {
+    if (count < range.$1 || count > range.$2) return const Color(0xFFD9534F);
+    final mid = (range.$1 + range.$2) / 2;
+    if (count == mid.floor() || count == mid.ceil()) return const Color(0xFF4CAF6D);
+    return const Color(0xFFE0B33C);
   }
 
   // 5(4-6) or 2.5(2-3), middle first, one decimal only when it isn't whole
@@ -907,10 +963,9 @@ class _LiveViewState extends State<_LiveView> {
 
   // Deck total against the recommended range, green while inside it
   Widget _totalLabel(String label, int count, (int, int) range) {
-    final ok = count >= range.$1 && count <= range.$2;
     return Text(
       '$label $count/${_rangeLabel(range)}',
-      style: TextStyle(fontSize: 12, color: ok ? const Color(0xFF4CAF6D) : null),
+      style: TextStyle(fontSize: 12, color: _rangeColor(count, range)),
     );
   }
 

@@ -185,8 +185,9 @@ def main():
                 json.dump(merged, f)
             print(f'  {code} {event}: {len(merged)} cards')
             time.sleep(1)
-        # Per pair ratings, only for sets being drafted now, they multiply the data
-        if code in active:
+        # Per pair ratings for every set, built once. They are slim, just a name
+        # and a win rate, so all ten pairs cost far less than the card data.
+        if True:
             for pair in PAIRS:
                 path = f'{OUT}/{code}_PremierDraft_{pair}.json'
                 if os.path.exists(path) and not refresh_all and code not in active:

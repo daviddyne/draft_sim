@@ -78,6 +78,21 @@ class _BrowseViewState extends State<_BrowseView> {
                 return Column(
                   children: [
                     if (state.loading) const LinearProgressIndicator(),
+                    if (state.available.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                state.error ?? 'Set list not loaded yet',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ),
+                            TextButton(onPressed: cubit.loadAvailable, child: const Text('Retry')),
+                          ],
+                        ),
+                      ),
                     Expanded(
                       child: ListView.builder(
                         itemCount: options.length,
@@ -179,38 +194,39 @@ class _BrowseViewState extends State<_BrowseView> {
                   onPressed: () => context.read<BrowseCubit>().togglePair(_deck),
                 ),
                 if (state.pair.isNotEmpty)
-                  SizedBox(
-                    // Wide enough for the dots and a percentage, so the menu can't overflow
-                    width: 108,
-                    child: DropdownButton<String>(
-                      value: state.pair,
-                      isExpanded: true,
-                      underline: const SizedBox.shrink(),
-                      // Strongest pair first, so the menu doubles as a ranking
-                      selectedItemBuilder: (context) => [
-                        for (final p in _pairsByRating(state))
-                          Align(alignment: Alignment.centerLeft, child: _pairDots(p, size: 12)),
-                      ],
-                      items: [
-                        for (final p in _pairsByRating(state))
-                          DropdownMenuItem(
-                            value: p,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                _pairDots(p, size: 12),
-                                const SizedBox(width: 4),
-                                Text(
-                                  state.pairAverages[p] == null
-                                      ? '-'
-                                      : '${(state.pairAverages[p]! * 100).toStringAsFixed(1)}%',
-                                  style: const TextStyle(fontSize: 12),
-                                ),
-                              ],
-                            ),
+                  PopupMenuButton<String>(
+                    tooltip: 'Choose color pair',
+                    // A popup sizes its own menu, so the button stays as small as the dots
+                    onSelected: (v) => context.read<BrowseCubit>().setPairManually(v),
+                    itemBuilder: (context) => [
+                      for (final p in _pairsByRating(state))
+                        PopupMenuItem(
+                          value: p,
+                          height: 34,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _pairDots(p, size: 12),
+                              const SizedBox(width: 6),
+                              Text(
+                                state.pairAverages[p] == null
+                                    ? '-'
+                                    : '${(state.pairAverages[p]! * 100).toStringAsFixed(1)}%',
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ],
                           ),
-                      ],
-                      onChanged: (v) => v == null ? null : context.read<BrowseCubit>().setPairManually(v),
+                        ),
+                    ],
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _pairDots(state.pair, size: 12),
+                          const Icon(Icons.arrow_drop_down, size: 18),
+                        ],
+                      ),
                     ),
                   ),
               ],
@@ -798,7 +814,10 @@ class _BrowseViewState extends State<_BrowseView> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    _pairBadge(state.pair, state.pairRatings[card.name]),
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: _pairBadge(state.pair, state.pairRatings[card.name]),
+                    ),
                     _badgeSlot(_betterPair(state, card) == null
                         ? null
                         : _pairBadge(_betterPair(state, card)!.$1, _betterPair(state, card)!.$2, faded: true)),
@@ -860,7 +879,10 @@ class _BrowseViewState extends State<_BrowseView> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text(card.gihwrLabel, style: stats),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 4),
+                        child: Text(card.gihwrLabel, style: stats),
+                      ),
                       // The pair this card is best in, so the ceiling is visible
                       _topPairSlot(context.read<BrowseCubit>().state, card),
                     ],
@@ -1296,11 +1318,10 @@ class _BrowseViewState extends State<_BrowseView> {
   // Small count under a stack, green while inside the recommended range
   Widget _rowCount(int count, (int, int)? range) {
     if (range == null) return const SizedBox(height: 14);
-    final ok = count >= range.$1 && count <= range.$2;
     return SizedBox(
       height: 14,
       child: Text('$count/${_rangeLabel(range)}',
-          style: TextStyle(fontSize: 10, color: ok ? const Color(0xFF4CAF6D) : null)),
+          style: TextStyle(fontSize: 10, color: _rangeColor(count, range))),
     );
   }
 
@@ -1308,15 +1329,22 @@ class _BrowseViewState extends State<_BrowseView> {
   // brackets, green while inside it
   Widget _columnLabel(String label, int count, (int, int)? range) {
     if (range == null) return Text(label);
-    final ok = count >= range.$1 && count <= range.$2;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         Text(label),
         Text('$count/${_rangeLabel(range)}',
-            style: TextStyle(fontSize: 11, color: ok ? const Color(0xFF4CAF6D) : null)),
+            style: TextStyle(fontSize: 11, color: _rangeColor(count, range))),
       ],
     );
+  }
+
+  // Red outside the range, yellow inside it, green on the recommended amount
+  Color _rangeColor(int count, (int, int) range) {
+    if (count < range.$1 || count > range.$2) return const Color(0xFFD9534F);
+    final mid = (range.$1 + range.$2) / 2;
+    if (count == mid.floor() || count == mid.ceil()) return const Color(0xFF4CAF6D);
+    return const Color(0xFFE0B33C);
   }
 
   // 5(4-6) or 2.5(2-3), middle first, one decimal only when it isn't whole
@@ -1328,10 +1356,9 @@ class _BrowseViewState extends State<_BrowseView> {
 
   // Deck total against the recommended range, green while inside it
   Widget _totalLabel(String label, int count, (int, int) range) {
-    final ok = count >= range.$1 && count <= range.$2;
     return Text(
       '$label $count/${_rangeLabel(range)}',
-      style: TextStyle(fontSize: 12, color: ok ? const Color(0xFF4CAF6D) : null),
+      style: TextStyle(fontSize: 12, color: _rangeColor(count, range)),
     );
   }
 

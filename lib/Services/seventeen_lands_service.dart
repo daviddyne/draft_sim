@@ -16,6 +16,7 @@ class SetOption {
 }
 
 class SeventeenLandsService {
+  static const pairs = ['WU', 'WB', 'WR', 'WG', 'UB', 'UR', 'UG', 'BR', 'BG', 'RG'];
   static const _base = 'https://www.17lands.com/api/card_data';
   static const _expansions = 'https://www.17lands.com/data/expansions';
   // 17lands sends no CORS header, so web builds read data committed next to the
@@ -42,14 +43,20 @@ class SeventeenLandsService {
     final suffix = colors.isEmpty ? '' : '&colors=$colors';
     final live = '$_base?expansion=${setCode.toUpperCase()}&event_type=$eventType&time_period=$timePeriod$suffix';
     if (_static) {
-      final pair = colors.isEmpty ? '' : '_$colors';
-      return Uri.parse('$_dataBase/${setCode.toUpperCase()}_$eventType$pair.json');
+      // Pair files are only built for Premier Draft, they barely differ by format
+      if (colors.isNotEmpty) {
+        return Uri.parse('$_dataBase/${setCode.toUpperCase()}_PremierDraft_$colors.json');
+      }
+      return Uri.parse('$_dataBase/${setCode.toUpperCase()}_$eventType.json');
     }
     return _url(live);
   }
 
   // Card name to win rate for decks of one color pair, empty when unavailable
   Future<Map<String, double>> fetchPairRatings(String setCode, String eventType, String colors) async {
+    // Kept once fetched, they are small and never change for a finished set
+    final stored = cache.loadPairRatings(setCode, eventType, colors);
+    if (stored != null) return stored;
     try {
       final uri = _cardDataUrl(setCode, eventType, 'ALL_TIME', colors: colors);
       final response = await http.get(uri).timeout(_timeout);
@@ -65,6 +72,7 @@ class SeventeenLandsService {
         final wr = (row['ever_drawn_win_rate'] ?? row['gihwr']) as num?;
         if (name.isNotEmpty && wr != null) out[name] = wr.toDouble();
       }
+      if (out.isNotEmpty) await cache.savePairRatings(setCode, eventType, colors, out);
       return out;
     } catch (_) {
       return const {};
@@ -164,6 +172,10 @@ class SeventeenLandsService {
       lands = await fetchBasicLands(setCode, eventType: eventType, save: true);
     } catch (_) {
       // Lands are optional, the set itself is what matters
+    }
+    // Pair ratings too, otherwise the pair table is empty offline
+    for (final pair in pairs) {
+      await fetchPairRatings(setCode, eventType, pair);
     }
     await _downloadImages(setCode, [...cards, ...lands], onProgress);
     return cards.length;
