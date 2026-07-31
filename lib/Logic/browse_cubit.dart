@@ -137,12 +137,13 @@ class BrowseCubit extends Cubit<BrowseState> {
   }
 
   Future<void> _loadAllPairs() async {
-    final missing = pairs.where((p) => !state.allPairRatings.containsKey(p)).toList();
+    final missing = pairs.where((p) => (state.allPairRatings[p] ?? const {}).isEmpty).toList();
     if (missing.isEmpty) return;
     // A few at a time, ten sequential requests made switching pairs sluggish
     const batch = 5;
     for (var i = 0; i < missing.length; i += batch) {
       final slice = missing.skip(i).take(batch).toList();
+      // One pair failing shouldn't abandon the rest of the batch
       final results = await Future.wait([
         for (final p in slice) _service.fetchPairRatings(_setCode, _eventType, p),
       ]);

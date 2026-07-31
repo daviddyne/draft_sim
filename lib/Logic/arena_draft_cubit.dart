@@ -120,7 +120,11 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
   Future<void> start({String? logPath}) async {
     final path = logPath ?? ArenaLogService.findLog();
     if (path == null) {
-      emit(const ArenaDraftState(error: 'Player.log not found, enter the path manually'));
+      emit(
+        const ArenaDraftState(
+          error: 'Player.log not found, enter the path manually',
+        ),
+      );
       return;
     }
     // Subscribe before parsing starts, a broadcast stream drops events without listeners
@@ -272,16 +276,31 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
         // Not every set has data for every event type, PremierDraft is the safest fallback
         cards = await _service.fetchRatings(e.setCode);
       }
-      _byArenaId = {for (final c in cards) if (c.arenaId != null) c.arenaId!: c};
+      _byArenaId = {
+        for (final c in cards)
+          if (c.arenaId != null) c.arenaId!: c,
+      };
       // Basic lands fill the pack land slot, they have no ratings of their own
       try {
-        for (final land in await _service.fetchBasicLands(e.setCode, eventType: eventType)) {
+        for (final land in await _service.fetchBasicLands(
+          e.setCode,
+          eventType: eventType,
+        )) {
           _byArenaId[land.arenaId!] = land;
         }
       } catch (_) {
         // Lands are cosmetic here, a failure just means the land slot stays unmatched
       }
-      emit(state.copyWith(setCode: e.setCode, eventType: eventType, pack: [], pool: [], sideboard: [], unknownIds: 0));
+      emit(
+        state.copyWith(
+          setCode: e.setCode,
+          eventType: eventType,
+          pack: [],
+          pool: [],
+          sideboard: [],
+          unknownIds: 0,
+        ),
+      );
       if (_pendingPack.isNotEmpty) _emitPack(_pendingPack);
       for (final id in _pendingPicks) {
         _emitPick(id);
@@ -305,8 +324,17 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
 
   void _emitPack(List<int> grpIds) {
     final cards = [for (final id in grpIds) ?_byArenaId[id]];
-    final unknown = [for (final id in grpIds) if (!_byArenaId.containsKey(id)) id];
-    emit(state.copyWith(pack: cards, unknownIds: unknown.length, unknownInfo: unknown.join(', ')));
+    final unknown = [
+      for (final id in grpIds)
+        if (!_byArenaId.containsKey(id)) id,
+    ];
+    emit(
+      state.copyWith(
+        pack: cards,
+        unknownIds: unknown.length,
+        unknownInfo: unknown.join(', '),
+      ),
+    );
   }
 
   void _emitPick(int grpId) {
@@ -319,7 +347,18 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
     _autoPair();
   }
 
-  static const pairs = ['WU', 'WB', 'WR', 'WG', 'UB', 'UR', 'UG', 'BR', 'BG', 'RG'];
+  static const pairs = [
+    'WU',
+    'WB',
+    'WR',
+    'WG',
+    'UB',
+    'UR',
+    'UG',
+    'BR',
+    'BG',
+    'RG',
+  ];
   Future<void> togglePair() async {
     if (state.pair.isNotEmpty) {
       emit(state.copyWith(pair: '', pairRatings: const {}));
@@ -332,13 +371,26 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
   Future<void> setPairManually(String pair) async => setPair(pair);
 
   Future<void> setPair(String pair) async {
-    emit(state.copyWith(pair: pair, pairRatings: state.allPairRatings[pair] ?? const {}));
-    final ratings = state.allPairRatings[pair] ?? await _service.fetchPairRatings(state.setCode, state.eventType, pair);
+    emit(
+      state.copyWith(
+        pair: pair,
+        pairRatings: state.allPairRatings[pair] ?? const {},
+      ),
+    );
+    final ratings =
+        state.allPairRatings[pair] ??
+        await _service.fetchPairRatings(state.setCode, state.eventType, pair);
     if (state.pair == pair) {
       final avg = _pairAverage(ratings);
       final averages = Map<String, double>.from(state.pairAverages);
       if (avg != null) averages[pair] = avg;
-      emit(state.copyWith(pairRatings: ratings, pairAverage: avg, pairAverages: averages));
+      emit(
+        state.copyWith(
+          pairRatings: ratings,
+          pairAverage: avg,
+          pairAverages: averages,
+        ),
+      );
     }
     _loadAllPairs();
   }
@@ -347,22 +399,29 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
   // How strong the pair's playables are, averaged over its best 20 commons
   // and uncommons. Rares are left out, they can't be counted on.
   double? _pairAverage(Map<String, double> ratings) {
-    final pool = _byArenaId.values.where((c) => c.rarity == 'common' || c.rarity == 'uncommon').toList();
-    final rated = [for (final c in pool) ?ratings[c.name]]..sort((a, b) => b.compareTo(a));
+    final pool = _byArenaId.values
+        .where((c) => c.rarity == 'common' || c.rarity == 'uncommon')
+        .toList();
+    final rated = [for (final c in pool) ?ratings[c.name]]
+      ..sort((a, b) => b.compareTo(a));
     if (rated.isEmpty) return null;
     final top = rated.take(20).toList();
     return top.reduce((a, b) => a + b) / top.length;
   }
 
   Future<void> _loadAllPairs() async {
-    final missing = pairs.where((p) => !state.allPairRatings.containsKey(p)).toList();
+    final missing = pairs
+        .where((p) => (state.allPairRatings[p] ?? const {}).isEmpty)
+        .toList();
     if (missing.isEmpty) return;
     // A few at a time, ten sequential requests made switching pairs sluggish
     const batch = 5;
     for (var i = 0; i < missing.length; i += batch) {
       final slice = missing.skip(i).take(batch).toList();
+      // One pair failing shouldn't abandon the rest of the batch
       final results = await Future.wait([
-        for (final p in slice) _service.fetchPairRatings(state.setCode, state.eventType, p),
+        for (final p in slice)
+          _service.fetchPairRatings(state.setCode, state.eventType, p),
       ]);
       if (isClosed) return;
       final all = Map<String, Map<String, double>>.from(state.allPairRatings);
@@ -376,18 +435,22 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
     _autoPair();
   }
 
-
   // The pair holding most of the picked cards, weighted by how good they are
   String bestPair() {
-    final pool = state.pool.where((c) => !c.isLand && c.color.isNotEmpty).toList();
+    final pool = state.pool
+        .where((c) => !c.isLand && c.color.isNotEmpty)
+        .toList();
     if (pool.isEmpty) return _strongestPair();
     var best = <String>[];
     var bestCount = -1;
     var bestScore = -1.0;
     for (final pair in pairs) {
-      final cards = pool.where((c) => c.color.split('').every(pair.contains)).toList();
+      final cards = pool
+          .where((c) => c.color.split('').every(pair.contains))
+          .toList();
       final score = cards.fold(0.0, (s, c) => s + ((c.gihwr ?? 0.5) - 0.45));
-      if (cards.length > bestCount || (cards.length == bestCount && score > bestScore)) {
+      if (cards.length > bestCount ||
+          (cards.length == bestCount && score > bestScore)) {
         best = [pair];
         bestCount = cards.length;
         bestScore = score;
@@ -401,7 +464,8 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
   // Whichever pair has the deepest playables, before any picks say otherwise
   String _strongestPair() {
     if (state.pairAverages.isEmpty) return pairs[_random.nextInt(pairs.length)];
-    final ranked = [...state.pairAverages.entries]..sort((a, b) => b.value.compareTo(a.value));
+    final ranked = [...state.pairAverages.entries]
+      ..sort((a, b) => b.value.compareTo(a.value));
     return ranked.first.key;
   }
 
@@ -430,7 +494,15 @@ class ArenaDraftCubit extends Cubit<ArenaDraftState> {
     _deckApplied = false;
     _fullPool.clear();
     _lastPoolIds = [];
-    emit(state.copyWith(pack: [], pool: [], sideboard: [], unknownIds: 0, unknownInfo: ''));
+    emit(
+      state.copyWith(
+        pack: [],
+        pool: [],
+        sideboard: [],
+        unknownIds: 0,
+        unknownInfo: '',
+      ),
+    );
   }
 
   // Clear the tracked draft without disconnecting, e.g. when starting a new one

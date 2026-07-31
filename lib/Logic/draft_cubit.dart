@@ -233,18 +233,28 @@ class DraftCubit extends Cubit<DraftState> {
   }
 
   Future<void> _loadAllPairs() async {
-    if (state.allPairRatings.length == pairs.length) return;
-    final all = Map<String, Map<String, double>>.from(state.allPairRatings);
-    final averages = Map<String, double>.from(state.pairAverages);
-    for (final p in pairs) {
-      if (all.containsKey(p)) continue;
-      all[p] = await _service.fetchPairRatings(_setCode, _eventType, p);
-      if (_pairAverage(all[p]!) case final avg?) averages[p] = avg;
+    final missing = pairs.where((p) => (state.allPairRatings[p] ?? const {}).isEmpty).toList();
+    if (missing.isEmpty) return;
+    // A few at a time, ten sequential requests made switching pairs sluggish
+    const batch = 5;
+    for (var i = 0; i < missing.length; i += batch) {
+      final slice = missing.skip(i).take(batch).toList();
+      // One pair failing shouldn't abandon the rest of the batch
+      final results = await Future.wait([
+        for (final p in slice) _service.fetchPairRatings(_setCode, _eventType, p),
+      ]);
       if (isClosed) return;
-      emit(state.copyWith(allPairRatings: Map.of(all), pairAverages: Map.of(averages)));
+      final all = Map<String, Map<String, double>>.from(state.allPairRatings);
+      final averages = Map<String, double>.from(state.pairAverages);
+      for (var j = 0; j < slice.length; j++) {
+        all[slice[j]] = results[j];
+        if (_pairAverage(results[j]) case final avg?) averages[slice[j]] = avg;
+      }
+      emit(state.copyWith(allPairRatings: all, pairAverages: averages));
     }
     _autoPair();
   }
+
 
   // The pair holding most of the picked cards, weighted by how good they are.
   // With only a few picks many pairs tie, so the result is near arbitrary early on.

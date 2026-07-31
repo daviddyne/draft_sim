@@ -54,10 +54,10 @@ class SeventeenLandsService {
 
   // Card name to win rate for decks of one color pair, empty when unavailable
   Future<Map<String, double>> fetchPairRatings(String setCode, String eventType, String colors) async {
-    // Kept once fetched, they are small and never change for a finished set
-    final stored = cache.loadPairRatings(setCode, eventType, colors);
-    if (stored != null) return stored;
     try {
+      // Kept once fetched, they are small and never change for a finished set
+      final stored = cache.loadPairRatings(setCode, eventType, colors);
+      if (stored != null && stored.isNotEmpty) return stored;
       final uri = _cardDataUrl(setCode, eventType, 'ALL_TIME', colors: colors);
       final response = await http.get(uri).timeout(_timeout);
       if (response.statusCode != 200) return const {};
