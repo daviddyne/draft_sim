@@ -85,7 +85,7 @@ class _BrowseViewState extends State<_BrowseView> {
                           children: [
                             Expanded(
                               child: Text(
-                                state.error ?? 'Set list not loaded yet',
+                                state.setListError ?? 'Set list not loaded yet',
                                 style: Theme.of(context).textTheme.bodySmall,
                               ),
                             ),
@@ -302,7 +302,9 @@ class _BrowseViewState extends State<_BrowseView> {
       body: BlocBuilder<BrowseCubit, BrowseState>(
         builder: (context, state) {
           if (state.loading) return const Center(child: CircularProgressIndicator());
-          if (state.error != null) {
+          // Only a total failure takes over the screen. Offline, the set list
+          // fetch fails while the downloaded cards are perfectly usable.
+          if (state.error != null && state.cards.isEmpty) {
             return Center(child: Text(state.error!, style: TextStyle(color: Theme.of(context).colorScheme.error)));
           }
           _rebuildDerived(state.cards);

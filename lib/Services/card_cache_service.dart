@@ -112,6 +112,23 @@ class CardCacheService {
     }
   }
 
+  // The catalogue of sets, so the picker and dropdown work without a connection
+  Future<void> saveSetList(List<Map<String, dynamic>> sets) async {
+    await _meta.put('set_list', jsonEncode(sets));
+  }
+
+  List<Map<String, dynamic>>? loadSetList() {
+    final raw = _meta.get('set_list');
+    if (raw == null) return null;
+    try {
+      return [
+        for (final e in jsonDecode(raw) as List) e as Map<String, dynamic>,
+      ];
+    } catch (_) {
+      return null;
+    }
+  }
+
   // Everything downloaded so far, for the start screen list
   Future<List<CachedSet>> listCached() async {
     final result = <CachedSet>[];

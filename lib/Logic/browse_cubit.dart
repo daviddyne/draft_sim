@@ -12,6 +12,8 @@ class BrowseState {
   final List<SetOption> available;
   // Basic lands, so a deck can include them
   final List<CardRating> lands;
+  // Kept apart from error, a missing set list shouldn't blank the screen
+  final String? setListError;
   // Color pair whose ratings are shown beside the overall ones, empty is off
   final String pair;
   final Map<String, double> pairRatings;
@@ -28,6 +30,7 @@ class BrowseState {
     this.setCodes = const [],
     this.available = const [],
     this.lands = const [],
+    this.setListError,
     this.pair = '',
     this.pairRatings = const {},
     this.allPairRatings = const {},
@@ -42,6 +45,7 @@ class BrowseState {
     List<String>? setCodes,
     List<SetOption>? available,
     List<CardRating>? lands,
+    String? setListError,
     String? pair,
     Map<String, double>? pairRatings,
     Map<String, Map<String, double>>? allPairRatings,
@@ -55,6 +59,7 @@ class BrowseState {
       setCodes: setCodes ?? this.setCodes,
       available: available ?? this.available,
       lands: lands ?? this.lands,
+      setListError: setListError ?? this.setListError,
       pair: pair ?? this.pair,
       pairRatings: pairRatings ?? this.pairRatings,
       allPairRatings: allPairRatings ?? this.allPairRatings,
@@ -202,8 +207,8 @@ class BrowseCubit extends Cubit<BrowseState> {
     try {
       emit(state.copyWith(available: await _service.fetchSets()));
     } catch (e) {
-      // Shown in the picker so an empty list isn't a mystery
-      emit(state.copyWith(error: 'Could not load the set list: $e'));
+      // Shown in the picker only, the cards on screen are unaffected
+      emit(state.copyWith(setListError: 'Could not load the set list: $e'));
     }
   }
 
