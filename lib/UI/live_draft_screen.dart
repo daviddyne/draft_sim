@@ -40,6 +40,8 @@ class _LiveViewState extends State<_LiveView> {
   // Cards moved between the creature and noncreature rows, e.g. a sorcery that
   // makes a creature can be counted as one
   final Map<String, bool> _typeOverride = {};
+  // Both ranking tables can be hidden to give the cards the whole window
+  bool _showRanks = true;
   // The overall ranking can be hidden to leave the pair ranking alone
   bool _showSolo = true;
   // The pair table has its own width, so its splitter leaves the first table alone
@@ -116,6 +118,19 @@ class _LiveViewState extends State<_LiveView> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 IconButton(
+                  tooltip: _showRanks
+                      ? 'Hide the rankings'
+                      : 'Show the rankings',
+                  icon: Icon(
+                    _showRanks
+                        ? Icons.view_sidebar
+                        : Icons.view_sidebar_outlined,
+                    size: 20,
+                    color: _showRanks ? null : Theme.of(context).disabledColor,
+                  ),
+                  onPressed: () => setState(() => _showRanks = !_showRanks),
+                ),
+                IconButton(
                   tooltip: _showSolo
                       ? 'Hide the overall ranking'
                       : 'Show the overall ranking',
@@ -124,7 +139,7 @@ class _LiveViewState extends State<_LiveView> {
                     size: 20,
                     color: _showSolo ? null : Theme.of(context).disabledColor,
                   ),
-                  onPressed: state.pair.isEmpty
+                  onPressed: state.pair.isEmpty || !_showRanks
                       ? null
                       : () => setState(() => _showSolo = !_showSolo),
                 ),
@@ -1283,6 +1298,7 @@ class _LiveViewState extends State<_LiveView> {
 
   // How wide the whole panel needs to be for whatever is showing
   double _panelWidth(ArenaDraftState state) {
+    if (!_showRanks) return 0;
     if (state.pair.isEmpty) return _rankWidth;
     return _showSolo ? _rankWidth + _pairWidth + 14 : _pairWidth;
   }

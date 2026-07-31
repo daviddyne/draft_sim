@@ -144,6 +144,8 @@ class _BrowseViewState extends State<_BrowseView> {
   double _zoomSize = 350;
   bool _zoomEnabled = true;
   // 320 is the narrowest the rank columns and a card name fit in
+  // Both ranking tables can be hidden to give the cards the whole window
+  bool _showRanks = true;
   // The overall ranking can be hidden to leave the pair ranking alone
   bool _showSolo = true;
   // The pair table has its own width, so its splitter leaves the first table alone
@@ -185,10 +187,18 @@ class _BrowseViewState extends State<_BrowseView> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 IconButton(
+                  tooltip: _showRanks ? 'Hide the rankings' : 'Show the rankings',
+                  icon: Icon(_showRanks ? Icons.view_sidebar : Icons.view_sidebar_outlined,
+                      size: 20, color: _showRanks ? null : Theme.of(context).disabledColor),
+                  onPressed: () => setState(() => _showRanks = !_showRanks),
+                ),
+                IconButton(
                   tooltip: _showSolo ? 'Hide the overall ranking' : 'Show the overall ranking',
                   icon: Icon(_showSolo ? Icons.table_rows : Icons.table_rows_outlined,
                       size: 20, color: _showSolo ? null : Theme.of(context).disabledColor),
-                  onPressed: state.pair.isEmpty ? null : () => setState(() => _showSolo = !_showSolo),
+                  onPressed: state.pair.isEmpty || !_showRanks
+                      ? null
+                      : () => setState(() => _showSolo = !_showSolo),
                 ),
                 IconButton(
                   tooltip: state.pair.isEmpty ? 'Show ratings for a color pair' : 'Hide pair ratings',
@@ -303,8 +313,7 @@ class _BrowseViewState extends State<_BrowseView> {
           final availableColors = _memoColors;
           return Column(
             children: [
-              if (_showFilters)
-                Padding(
+              Padding(
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
                 child: Row(
                   children: [
@@ -543,6 +552,7 @@ class _BrowseViewState extends State<_BrowseView> {
 
   // How wide the whole panel needs to be for whatever is showing
   double _panelWidth(BrowseState state) {
+    if (!_showRanks) return 0;
     if (state.pair.isEmpty) return _rankWidth;
     return _showSolo ? _rankWidth + _pairWidth + 14 : _pairWidth;
   }
@@ -571,8 +581,9 @@ class _BrowseViewState extends State<_BrowseView> {
     );
   }
 
-  // Drag to resize the ranking panel
+  // Drag to resize the ranking panel, absent while the panel is hidden
   Widget _buildVSplitter() {
+    if (!_showRanks) return const SizedBox.shrink();
     return MouseRegion(
       cursor: SystemMouseCursors.resizeColumn,
       child: GestureDetector(
